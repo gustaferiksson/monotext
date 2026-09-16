@@ -46,6 +46,8 @@ final class EditorTextView: NSTextView {
     private var headAtStart = false
     private var isFocused = false
     private var addCursorGoalX: CGFloat?
+    private var textRevision = 0
+    private var occurrenceCache: (key: String, matches: [NSRange])?
 
     var primaryCaret: NSRange { caretStorage[min(primaryIndex, caretStorage.count - 1)] }
     private var text: NSString { textStorage?.mutableString ?? NSMutableString() }
@@ -318,7 +320,7 @@ final class EditorTextView: NSTextView {
         }
         guard let (word, wordBoundaries) = currentNeedle() else { return }
         let after = NSMaxRange(caretStorage.last ?? primaryCaret)
-        guard let match = nextOccurrence(after: after, of: word, in: text as String, wordBoundaries: wordBoundaries, excluding: caretStorage) else { return }
+        guard let match = nextOccurrence(after: after, of: word, in: text, wordBoundaries: wordBoundaries, excluding: caretStorage) else { return }
         apply(caretStorage + [match], primaryHint: match.location)
         scrollRangeToVisible(match)
     }
@@ -330,7 +332,7 @@ final class EditorTextView: NSTextView {
         }
         guard let (word, wordBoundaries) = currentNeedle() else { return }
         let after = NSMaxRange(primaryCaret)
-        guard let match = nextOccurrence(after: after, of: word, in: text as String, wordBoundaries: wordBoundaries, excluding: caretStorage) else { return }
+        guard let match = nextOccurrence(after: after, of: word, in: text, wordBoundaries: wordBoundaries, excluding: caretStorage) else { return }
         var updated = caretStorage
         updated[min(primaryIndex, updated.count - 1)] = match
         apply(updated, primaryHint: match.location)
@@ -354,7 +356,7 @@ final class EditorTextView: NSTextView {
     }
 
     private func selectEvery(_ word: String, wordBoundaries: Bool) {
-        let matches = occurrences(of: word, in: text as String, wordBoundaries: wordBoundaries)
+        let matches = occurrences(of: word, in: text, wordBoundaries: wordBoundaries)
         guard !matches.isEmpty else { return }
         apply(matches, primaryHint: matches.last?.location)
     }
@@ -575,9 +577,47 @@ final class EditorTextView: NSTextView {
         return rects
     }
 
+    private func visibleCharacterRange() -> NSRange {
+        guard let layout = textLayoutManager, let content = layout.textContentManager,
+              let viewport = layout.textViewportLayoutController.viewportRange else {
+            return NSRange(location: 0, length: text.length)
+        }
+        let start = content.offset(from: content.documentRange.location, to: viewport.location)
+        let end = content.offset(from: content.documentRange.location, to: viewport.endLocation)
+        let margin = 4096
+        let lower = max(0, start - margin)
+        return NSRange(location: lower, length: min(text.length, end + margin) - lower)
+    }
+
+    func occurrenceMatches() -> [NSRange] {
+        guard caretsAreVisible, let needle = occurrenceNeedle(for: caretStorage, primary: primaryIndex, in: text) else { return [] }
+        let scope = visibleCharacterRange()
+        let key = "\(textRevision)|\(scope)|\(needle)"
+        // Only the search is cached; the caret exclusion is a cheap filter over the visible
+        // matches and must follow a caret set that moves without changing the needle.
+        let cached = occurrenceCache?.key == key ? occurrenceCache?.matches : nil
+        let found = cached ?? occurrences(of: needle, in: text, wordBoundaries: false, within: scope)
+        occurrenceCache = (key, found)
+        return found.filter { match in !caretStorage.contains { NSIntersectionRange($0, match).length > 0 } }
+    }
+
+    // An outline rather than a fill: it separates from a real selection by shape, so it can
+    // never read as "this is selected too" in either appearance.
+    private func drawOccurrenceHighlights(in rect: NSRect) {
+        NSColor.labelColor.withAlphaComponent(0.25).setStroke()
+        for match in occurrenceMatches() {
+            for segment in segmentRects(for: match) where segment.intersects(rect) {
+                let outline = NSBezierPath(roundedRect: segment.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
+                outline.lineWidth = 1
+                outline.stroke()
+            }
+        }
+    }
+
     // Overriding draw(_:) makes AppKit fall back to TextKit 1, so highlights are drawn here.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
+        drawOccurrenceHighlights(in: rect)
         guard caretStorage.count > 1 else { return }
         (caretsAreVisible ? NSColor.selectedTextBackgroundColor : .unemphasizedSelectedTextBackgroundColor).setFill()
         for (index, caret) in caretStorage.enumerated() where index != primaryIndex && caret.length > 0 {
@@ -691,6 +731,7 @@ final class EditorTextView: NSTextView {
     }
 
     override func didChangeText() {
+        textRevision += 1
         super.didChangeText()
         updateCaretIndicators()
     }

@@ -22,13 +22,13 @@ private func caretOrder(_ a: NSRange, _ b: NSRange) -> Bool {
     a.location == b.location ? a.length < b.length : a.location < b.location
 }
 
-func occurrences(of needle: String, in haystack: String, wordBoundaries: Bool) -> [NSRange] {
+func occurrences(of needle: String, in text: NSString, wordBoundaries: Bool, within limit: NSRange? = nil) -> [NSRange] {
     guard !needle.isEmpty else { return [] }
-    let text = haystack as NSString
+    let bounds = limit ?? NSRange(location: 0, length: text.length)
     var found: [NSRange] = []
-    var searchStart = 0
-    while searchStart < text.length {
-        let scope = NSRange(location: searchStart, length: text.length - searchStart)
+    var searchStart = bounds.location
+    while searchStart < NSMaxRange(bounds) {
+        let scope = NSRange(location: searchStart, length: NSMaxRange(bounds) - searchStart)
         let hit = text.range(of: needle, options: [.literal], range: scope)
         guard hit.location != NSNotFound else { break }
         searchStart = hit.location + 1
@@ -49,8 +49,8 @@ private func isWholeWord(_ range: NSRange, in text: NSString) -> Bool {
     return after >= text.length || !isWordCharacter(after)
 }
 
-func nextOccurrence(after location: Int, of needle: String, in haystack: String, wordBoundaries: Bool, excluding taken: [NSRange]) -> NSRange? {
-    let all = occurrences(of: needle, in: haystack, wordBoundaries: wordBoundaries)
+func nextOccurrence(after location: Int, of needle: String, in text: NSString, wordBoundaries: Bool, excluding taken: [NSRange]) -> NSRange? {
+    let all = occurrences(of: needle, in: text, wordBoundaries: wordBoundaries)
     let free = all.filter { candidate in !taken.contains { NSEqualRanges($0, candidate) } }
     guard !free.isEmpty else { return nil }
     return free.first { $0.location >= location } ?? free.first
@@ -96,4 +96,14 @@ private func lineNumber(of location: Int, in text: NSString) -> Int {
         number += 1
     }
     return number
+}
+
+func occurrenceNeedle(for carets: [NSRange], primary: Int, in text: NSString) -> String? {
+    let preferred = carets.indices.contains(primary) && carets[primary].length > 0 ? carets[primary] : nil
+    guard let selection = preferred ?? carets.first(where: { $0.length > 0 }) else { return nil }
+    guard selection.length >= 2 else { return nil }
+    let candidate = text.substring(with: selection)
+    guard !candidate.contains(where: \.isNewline) else { return nil }
+    guard candidate.contains(where: { !$0.isWhitespace }) else { return nil }
+    return candidate
 }
