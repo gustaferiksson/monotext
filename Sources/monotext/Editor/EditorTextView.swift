@@ -44,6 +44,7 @@ final class EditorTextView: NSTextView {
     private var focusObservers: [NSObjectProtocol] = []
     private var publishedSummary: String?
     private var headAtStart = false
+    private var isFocused = false
 
     var primaryCaret: NSRange { caretStorage[min(primaryIndex, caretStorage.count - 1)] }
     private var text: NSString { textStorage?.mutableString ?? NSMutableString() }
@@ -579,7 +580,7 @@ final class EditorTextView: NSTextView {
     }
 
     private var caretsAreVisible: Bool {
-        window?.isKeyWindow == true && window?.firstResponder === self
+        isFocused && window?.isKeyWindow == true
     }
 
     private func caretTip(_ caret: NSRange) -> NSRange {
@@ -606,7 +607,13 @@ final class EditorTextView: NSTextView {
 
     // MARK: - Wrapping
 
-    private static let gutter = NSSize(width: 3, height: 8)
+    private static let sideGutter: CGFloat = 8
+    private static let topGutter: CGFloat = 8
+
+    private func applyGutter(to container: NSTextContainer) {
+        container.lineFragmentPadding = Self.sideGutter
+        textContainerInset = NSSize(width: 0, height: Self.topGutter)
+    }
 
     private func applyWrapMode() {
         guard let container = textContainer else { return }
@@ -614,18 +621,18 @@ final class EditorTextView: NSTextView {
         guard wrapsToWindow else {
             let paper = NSPrintInfo.shared
             let width = paper.paperSize.width - paper.leftMargin - paper.rightMargin
-            textContainerInset = Self.gutter
+            applyGutter(to: container)
             container.widthTracksTextView = false
             container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
             isHorizontallyResizable = true
             maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
             autoresizingMask = []
-            minSize = NSSize(width: width + Self.gutter.width * 2, height: 0)
-            setFrameSize(NSSize(width: width + Self.gutter.width * 2, height: frame.height))
+            minSize = NSSize(width: width, height: 0)
+            setFrameSize(NSSize(width: width, height: frame.height))
             scroll?.hasHorizontalScroller = true
             return
         }
-        textContainerInset = Self.gutter
+        applyGutter(to: container)
         container.widthTracksTextView = true
         container.size = NSSize(width: scroll?.contentSize.width ?? frame.width, height: .greatestFiniteMagnitude)
         isHorizontallyResizable = false
@@ -645,16 +652,24 @@ final class EditorTextView: NSTextView {
         guard let window else { return }
         if let clip = enclosingScrollView?.contentView {
             clip.postsBoundsChangedNotifications = true
-            focusObservers.append(observe(NSView.boundsDidChangeNotification, from: clip))
+            focusObservers.append(observe(NSView.boundsDidChangeNotification, from: clip) { $0.updateCaretIndicators() })
         }
-        focusObservers.append(observe(NSWindow.didBecomeKeyNotification, from: window))
-        focusObservers.append(observe(NSWindow.didResignKeyNotification, from: window))
+        focusObservers.append(observe(NSWindow.didBecomeKeyNotification, from: window) { $0.focusChanged() })
+        focusObservers.append(observe(NSWindow.didResignKeyNotification, from: window) { $0.focusChanged() })
     }
 
-    private func observe(_ name: Notification.Name, from object: AnyObject) -> NSObjectProtocol {
-        NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
-            self?.updateCaretIndicators()
+    private func observe(_ name: Notification.Name, from object: AnyObject, _ action: @escaping (EditorTextView) -> Void) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(forName: name, object: object, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            action(self)
         }
+    }
+
+    // The highlight colour depends on focus, so a focus change has to repaint, not just
+    // reposition the indicators.
+    private func focusChanged() {
+        needsDisplay = true
+        updateCaretIndicators()
     }
 
     deinit { focusObservers.forEach(NotificationCenter.default.removeObserver) }
@@ -672,12 +687,15 @@ final class EditorTextView: NSTextView {
     }
 
     override func becomeFirstResponder() -> Bool {
-        defer { updateCaretIndicators() }
-        return super.becomeFirstResponder()
+        isFocused = super.becomeFirstResponder()
+        focusChanged()
+        return isFocused
     }
 
     override func resignFirstResponder() -> Bool {
-        defer { updateCaretIndicators() }
-        return super.resignFirstResponder()
+        guard super.resignFirstResponder() else { return false }
+        isFocused = false
+        focusChanged()
+        return true
     }
 }
