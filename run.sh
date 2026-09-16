@@ -20,6 +20,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>MonoText</string>
   <key>CFBundleDisplayName</key><string>MonoText</string>
   <key>CFBundleExecutable</key><string>monotext</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>dev.gustaf.monotext</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.0.1</string>
@@ -53,6 +54,9 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+mkdir -p "$BUNDLE/Contents/Resources"
+cp "$ROOT/icon/AppIcon.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
 
 pkill -x monotext 2>/dev/null || true
 open -n "$BUNDLE"
