@@ -45,6 +45,7 @@ final class EditorTextView: NSTextView {
     private var publishedSummary: String?
     private var headAtStart = false
     private var isFocused = false
+    private var addCursorGoalX: CGFloat?
 
     var primaryCaret: NSRange { caretStorage[min(primaryIndex, caretStorage.count - 1)] }
     private var text: NSString { textStorage?.mutableString ?? NSMutableString() }
@@ -53,6 +54,7 @@ final class EditorTextView: NSTextView {
 
     private func apply(_ ranges: [NSRange], primaryHint: Int?, recordHistory: Bool = true, headAtStart: Bool = false) {
         self.headAtStart = headAtStart
+        addCursorGoalX = nil
         let normalized = normalizeCarets(ranges, length: text.length)
         let hint = primaryHint ?? primaryCaret.location
         if recordHistory, normalized != caretStorage { pushHistory() }
@@ -96,6 +98,7 @@ final class EditorTextView: NSTextView {
         guard incoming != caretStorage else { return }
         if caretStorage.count > 1, !stillSelecting { pushHistory() }
         headAtStart = incoming[0].length > 0 && incoming[0].location != caretStorage[0].location
+        addCursorGoalX = nil
         caretStorage = normalizeCarets(incoming, length: text.length)
         primaryIndex = caretStorage.count - 1
         refreshDecorations()
@@ -382,13 +385,16 @@ final class EditorTextView: NSTextView {
         let anchor = lineOffset < 0 ? caretStorage.first! : caretStorage.last!
         let probe = lineOffset < 0 ? anchor.location : NSMaxRange(anchor)
         guard let rect = segmentRects(for: NSRange(location: probe, length: 0)).first else { return }
-        let point = NSPoint(x: rect.midX, y: rect.midY + CGFloat(lineOffset) * rect.height)
-        let index = characterIndexForInsertion(at: point)
+        // The goal x is kept for the whole run so a short or empty line clamps this caret
+        // without dragging the ones after it to its column.
+        let goalX = addCursorGoalX ?? rect.midX
+        let index = characterIndexForInsertion(at: NSPoint(x: goalX, y: rect.midY + CGFloat(lineOffset) * rect.height))
         guard lineOffset < 0 ? index < probe : index > probe else { return }
         guard text.lineRange(for: NSRange(location: min(index, max(text.length - 1, 0)), length: 0))
             != text.lineRange(for: NSRange(location: min(probe, max(text.length - 1, 0)), length: 0)) else { return }
         let added = NSRange(location: index, length: 0)
         apply(caretStorage + [added], primaryHint: added.location)
+        addCursorGoalX = goalX
         scrollRangeToVisible(added)
     }
 
