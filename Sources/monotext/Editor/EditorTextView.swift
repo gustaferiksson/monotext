@@ -607,8 +607,8 @@ final class EditorTextView: NSTextView {
         NSColor.labelColor.withAlphaComponent(0.4).setStroke()
         for match in occurrenceMatches() {
             for segment in segmentRects(for: match) where segment.intersects(rect) {
-                let outline = NSBezierPath(roundedRect: segment.insetBy(dx: -1, dy: -0.5), xRadius: 1, yRadius: 1)
-                outline.lineWidth = 1
+                let outline = NSBezierPath(roundedRect: segment.insetBy(dx: -0.5, dy: -0.25), xRadius: 1.5, yRadius: 1.5)
+                outline.lineWidth = 0.75
                 outline.stroke()
             }
         }
