@@ -106,3 +106,23 @@ func occurrenceNeedle(for carets: [NSRange], primary: Int, in text: NSString) ->
     guard candidate.contains(where: { !$0.isWhitespace }) else { return nil }
     return candidate
 }
+
+func lineBlocks(for carets: [NSRange], in text: NSString) -> [NSRange] {
+    guard !carets.isEmpty, text.length > 0 else { return [] }
+    let clamp = { (location: Int) in min(max(location, 0), text.length - 1) }
+    let raw = carets.map { caret -> NSRange in
+        let first = text.lineRange(for: NSRange(location: clamp(caret.location), length: 0))
+        let last = text.lineRange(for: NSRange(location: clamp(max(caret.location, NSMaxRange(caret) - 1)), length: 0))
+        return NSRange(location: first.location, length: NSMaxRange(last) - first.location)
+    }
+    var merged = [raw.sorted { $0.location < $1.location }[0]]
+    for block in raw.sorted(by: { $0.location < $1.location }).dropFirst() {
+        let last = merged[merged.count - 1]
+        guard block.location <= NSMaxRange(last) else {
+            merged.append(block)
+            continue
+        }
+        merged[merged.count - 1] = NSUnionRange(last, block)
+    }
+    return merged
+}

@@ -20,14 +20,14 @@ Requires macOS 26 or later.
 | ⌥⌘↑ | Add Cursor Above |
 | ⌥⌘↓ | Add Cursor Below |
 | ⌘D | Add Next Occurrence |
-| ⌘K ⌘D | Move Last Selection to Next Occurrence |
 | ⇧⌘L | Select All Occurrences |
 | ⌘F2 | Select All Occurrences of Word |
 | ⇧⌥I | Add Cursors to Line Ends |
 | ⌘U | Undo Last Cursor Operation |
 | ⎋ | Collapse to One Cursor |
-| ⌥click | Add or remove a cursor |
 | ⇧⌥drag | Column (rectangular) select |
+| ⌥↑ / ⌥↓ | Move the line up or down |
+| ⇧⌥↑ / ⇧⌥↓ | Copy the line up or down |
 | ⇧⌥⌘↑↓←→ | Grow the column selection |
 
 ## Known limitations

@@ -1,6 +1,6 @@
 import AppKit
 
-private final class CaretUndoRecord {
+final class CaretUndoRecord {
     let before: [NSRange]
     let primary: Int
     var after: [NSRange] = []
@@ -38,7 +38,6 @@ final class EditorTextView: NSTextView {
     private var fanningOut = false
     private var caretHistory: [[NSRange]] = []
     private var caretIndicators: [NSTextInsertionIndicator] = []
-    private var pendingChord = false
     private var columnAnchor: Int?
     private var columnFocus: Int?
     private var focusObservers: [NSObjectProtocol] = []
@@ -379,6 +378,10 @@ final class EditorTextView: NSTextView {
 
     private func isNewline(_ unit: unichar) -> Bool { unit == 10 || unit == 13 }
 
+    private func caretLocation(_ location: Int, isIn block: NSRange) -> Bool {
+        location >= block.location && (location < NSMaxRange(block) || NSMaxRange(block) == text.length)
+    }
+
     @objc func addCursorAbove(_ sender: Any?) { addCursor(lineOffset: -1) }
 
     @objc func addCursorBelow(_ sender: Any?) { addCursor(lineOffset: 1) }
@@ -398,6 +401,97 @@ final class EditorTextView: NSTextView {
         apply(caretStorage + [added], primaryHint: added.location)
         addCursorGoalX = goalX
         scrollRangeToVisible(added)
+    }
+
+    // MARK: - Line commands
+
+    @objc func moveLineUp(_ sender: Any?) { moveLines(by: -1) }
+
+    @objc func moveLineDown(_ sender: Any?) { moveLines(by: 1) }
+
+    @objc func copyLineUp(_ sender: Any?) { copyLines(keepingSelectionOnCopy: true) }
+
+    @objc func copyLineDown(_ sender: Any?) { copyLines(keepingSelectionOnCopy: false) }
+
+    private func lineBody(of line: NSRange) -> String {
+        var end = NSMaxRange(line)
+        while end > line.location, isNewline(text.character(at: end - 1)) { end -= 1 }
+        return text.substring(with: NSRange(location: line.location, length: end - line.location))
+    }
+
+    private func neighbourLine(of block: NSRange, by offset: Int) -> NSRange? {
+        guard offset > 0 else {
+            guard block.location > 0 else { return nil }
+            return text.lineRange(for: NSRange(location: block.location - 1, length: 0))
+        }
+        let after = NSMaxRange(block)
+        guard after < text.length else { return nil }
+        return text.lineRange(for: NSRange(location: after, length: 0))
+    }
+
+    private func replaceCharacters(in range: NSRange, with string: String) -> Bool {
+        guard shouldChangeText(in: range, replacementString: string) else { return false }
+        textStorage?.replaceCharacters(in: range, with: string)
+        didChangeText()
+        return true
+    }
+
+    private func beginLineEdit() -> CaretUndoRecord {
+        let record = CaretUndoRecord(before: caretStorage, primary: primaryIndex)
+        undoManager?.beginUndoGrouping()
+        registerCaretUndo(record, restoringBefore: true)
+        fanningOut = true
+        return record
+    }
+
+    private func endLineEdit(_ record: CaretUndoRecord, _ results: [NSRange]) {
+        fanningOut = false
+        undoManager?.endUndoGrouping()
+        record.after = results
+        apply(results, primaryHint: results[min(record.primary, results.count - 1)].location)
+        scrollRangeToVisible(primaryCaret)
+    }
+
+    private func moveLines(by offset: Int) {
+        let blocks = lineBlocks(for: caretStorage, in: text)
+        guard !blocks.isEmpty else { return }
+        let saved = caretStorage
+        var results = saved
+        let record = beginLineEdit()
+        for block in offset < 0 ? blocks : blocks.reversed() {
+            guard let neighbour = neighbourLine(of: block, by: offset) else { continue }
+            let region = NSUnionRange(block, neighbour)
+            let keepsTrailingNewline = isNewline(text.character(at: NSMaxRange(region) - 1))
+            let blockBody = lineBody(of: block)
+            let neighbourBody = lineBody(of: neighbour)
+            let joined = offset < 0 ? blockBody + "\n" + neighbourBody : neighbourBody + "\n" + blockBody
+            let landing = offset < 0 ? region.location : region.location + (neighbourBody as NSString).length + 1
+            guard replaceCharacters(in: region, with: joined + (keepsTrailingNewline ? "\n" : "")) else { continue }
+            let shift = landing - block.location
+            for index in results.indices where caretLocation(saved[index].location, isIn: block) {
+                results[index].location += shift
+            }
+        }
+        endLineEdit(record, results)
+    }
+
+    private func copyLines(keepingSelectionOnCopy: Bool) {
+        let blocks = lineBlocks(for: caretStorage, in: text)
+        guard !blocks.isEmpty else { return }
+        let saved = caretStorage
+        var results = saved
+        let record = beginLineEdit()
+        for block in blocks.reversed() {
+            let copy = lineBody(of: block) + "\n"
+            let delta = (copy as NSString).length
+            guard replaceCharacters(in: NSRange(location: block.location, length: 0), with: copy) else { continue }
+            for index in results.indices {
+                let inside = caretLocation(saved[index].location, isIn: block)
+                guard inside ? !keepingSelectionOnCopy : saved[index].location >= NSMaxRange(block) else { continue }
+                results[index].location += delta
+            }
+        }
+        endLineEdit(record, results)
     }
 
     @objc func undoCursor(_ sender: Any?) {
@@ -420,6 +514,9 @@ final class EditorTextView: NSTextView {
              #selector(selectAllOccurrences(_:)), #selector(selectAllOccurrencesOfWord(_:)),
              #selector(addCursorsToLineEnds(_:)):
             return isEditable || isSelectable
+        case #selector(moveLineUp(_:)), #selector(moveLineDown(_:)),
+             #selector(copyLineUp(_:)), #selector(copyLineDown(_:)):
+            return isEditable || isSelectable
         default:
             return super.validateUserInterfaceItem(menuItem)
         }
@@ -439,28 +536,31 @@ final class EditorTextView: NSTextView {
                 return true
             }
         }
-        let command = flags == .command
-        if command, event.charactersIgnoringModifiers == "k" {
-            pendingChord = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.pendingChord = false }
-            return true
-        }
-        if pendingChord {
-            pendingChord = false
-            guard command, event.charactersIgnoringModifiers == "d" else { return super.performKeyEquivalent(with: event) }
-            moveLastSelectionToNextFindMatch(nil)
-            return true
-        }
         return super.performKeyEquivalent(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard flags == [.shift, .option, .command], let key = event.charactersIgnoringModifiers?.unicodeScalars.first else {
+        let flags = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        guard let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else {
             super.keyDown(with: event)
             return
         }
-        switch Int(key.value) {
+        let key = Int(scalar.value)
+        let up = key == NSUpArrowFunctionKey
+        let down = key == NSDownArrowFunctionKey
+        if flags == [.option], up || down {
+            moveLines(by: up ? -1 : 1)
+            return
+        }
+        if flags == [.shift, .option], up || down {
+            copyLines(keepingSelectionOnCopy: up)
+            return
+        }
+        guard flags == [.shift, .option, .command] else {
+            super.keyDown(with: event)
+            return
+        }
+        switch key {
         case NSUpArrowFunctionKey: growColumnSelection(lines: -1, columns: 0)
         case NSDownArrowFunctionKey: growColumnSelection(lines: 1, columns: 0)
         case NSLeftArrowFunctionKey: growColumnSelection(lines: 0, columns: -1)
@@ -472,26 +572,14 @@ final class EditorTextView: NSTextView {
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let point = convert(event.locationInWindow, from: nil)
-        let index = characterIndexForInsertion(at: point)
-        if flags == [.option, .shift] {
-            columnSelect(anchor: index, focus: index)
-            return
-        }
-        guard flags == .option else {
+        let flags = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        guard flags == [.option, .shift] else {
             columnAnchor = nil
             super.mouseDown(with: event)
             return
         }
-        let existing = caretStorage.firstIndex { $0.length == 0 && $0.location == index }
-        guard let existing, caretStorage.count > 1 else {
-            apply(caretStorage + [NSRange(location: index, length: 0)], primaryHint: index)
-            return
-        }
-        var remaining = caretStorage
-        remaining.remove(at: existing)
-        apply(remaining, primaryHint: remaining.last?.location)
+        let index = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+        columnSelect(anchor: index, focus: index)
     }
 
     override func mouseDragged(with event: NSEvent) {
