@@ -585,8 +585,11 @@ final class EditorTextView: NSTextView {
         }
     }
 
+    // An offscreen test process can never become key, so renders opt in to the focused look.
+    private static let rendersAsFocused = ProcessInfo.processInfo.environment["MONOTEXT_RENDER_FOCUSED"] != nil
+
     private var caretsAreVisible: Bool {
-        isFocused && window?.isKeyWindow == true
+        isFocused && (window?.isKeyWindow == true || Self.rendersAsFocused)
     }
 
     private func caretTip(_ caret: NSRange) -> NSRange {
