@@ -34,8 +34,7 @@ final class EditorTextView: NSTextView {
     private var mirroring = false
     private var fanningOut = false
     private var caretHistory: [[NSRange]] = []
-    private var blinkOn = true
-    private var blinkTimer: Timer?
+    private var caretIndicators: [NSTextInsertionIndicator] = []
     private var pendingChord = false
     private var columnAnchor: Int?
     private var columnFocus: Int?
@@ -74,7 +73,7 @@ final class EditorTextView: NSTextView {
         capsule?.isHidden = caretStorage.count < 2
         capsule?.rootView = CursorCapsule(text: capsuleLabel)
         positionCapsule()
-        restartBlink()
+        updateCaretIndicators()
     }
 
     private var capsuleLabel: String {
@@ -558,7 +557,7 @@ final class EditorTextView: NSTextView {
         return rects
     }
 
-    // Overriding draw(_:) makes AppKit fall back to TextKit 1, so everything is drawn here.
+    // Overriding draw(_:) makes AppKit fall back to TextKit 1, so highlights are drawn here.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard caretStorage.count > 1 else { return }
@@ -566,32 +565,23 @@ final class EditorTextView: NSTextView {
         for (index, caret) in caretStorage.enumerated() where index != primaryIndex && caret.length > 0 {
             for segment in segmentRects(for: caret) where segment.intersects(rect) { segment.fill() }
         }
-        guard blinkOn else { return }
-        insertionPointColor.setFill()
-        for caretRect in secondaryCaretRects() where caretRect.intersects(rect) { caretRect.fill() }
     }
 
-    private func secondaryCaretRects() -> [NSRect] {
-        caretStorage.enumerated().compactMap { index, caret in
+    private func updateCaretIndicators() {
+        let tips = caretStorage.indices.compactMap { index -> NSRect? in
             guard index != primaryIndex else { return nil }
-            let tip = NSRange(location: NSMaxRange(caret), length: 0)
-            guard let segment = segmentRects(for: tip).first else { return nil }
-            return NSRect(x: segment.minX.rounded(), y: segment.minY, width: 1, height: segment.height)
+            let tip = NSRange(location: NSMaxRange(caretStorage[index]), length: 0)
+            return segmentRects(for: tip).first
         }
-    }
-
-    private func restartBlink() {
-        blinkTimer?.invalidate()
-        blinkTimer = nil
-        blinkOn = true
-        guard caretStorage.count > 1, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.56, repeats: true) { [weak self] timer in
-            guard let self else {
-                timer.invalidate()
-                return
-            }
-            blinkOn.toggle()
-            for rect in secondaryCaretRects() { setNeedsDisplay(rect.insetBy(dx: -1, dy: -1)) }
+        while caretIndicators.count < tips.count {
+            let indicator = NSTextInsertionIndicator()
+            addSubview(indicator)
+            caretIndicators.append(indicator)
+        }
+        for (index, indicator) in caretIndicators.enumerated() {
+            indicator.isHidden = index >= tips.count
+            guard index < tips.count else { continue }
+            indicator.frame = tips[index]
         }
     }
 
@@ -628,7 +618,6 @@ final class EditorTextView: NSTextView {
     private func attachCapsule(to scroll: NSScrollView) {
         let host = NSHostingView(rootView: CursorCapsule(text: capsuleLabel))
         host.sizingOptions = [.intrinsicContentSize]
-        host.autoresizingMask = [.minXMargin, .maxYMargin]
         host.isHidden = true
         scroll.addSubview(host)
         capsule = host
@@ -637,8 +626,8 @@ final class EditorTextView: NSTextView {
     private func positionCapsule() {
         guard let host = capsule, let scroll = enclosingScrollView else { return }
         let size = host.fittingSize
-        host.frame = NSRect(x: scroll.bounds.maxX - size.width - 16,
-                            y: scroll.bounds.minY + 16,
-                            width: size.width, height: size.height)
+        let bottom = scroll.isFlipped ? scroll.bounds.maxY - size.height - 16 : scroll.bounds.minY + 16
+        host.autoresizingMask = scroll.isFlipped ? [.minXMargin, .minYMargin] : [.minXMargin, .maxYMargin]
+        host.frame = NSRect(x: scroll.bounds.maxX - size.width - 16, y: bottom, width: size.width, height: size.height)
     }
 }
