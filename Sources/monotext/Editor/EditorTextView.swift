@@ -604,10 +604,10 @@ final class EditorTextView: NSTextView {
     // An outline rather than a fill: it separates from a real selection by shape, so it can
     // never read as "this is selected too" in either appearance.
     private func drawOccurrenceHighlights(in rect: NSRect) {
-        NSColor.labelColor.withAlphaComponent(0.25).setStroke()
+        NSColor.labelColor.withAlphaComponent(0.4).setStroke()
         for match in occurrenceMatches() {
             for segment in segmentRects(for: match) where segment.intersects(rect) {
-                let outline = NSBezierPath(roundedRect: segment.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
+                let outline = NSBezierPath(roundedRect: segment.insetBy(dx: -1, dy: -0.5), xRadius: 1, yRadius: 1)
                 outline.lineWidth = 1
                 outline.stroke()
             }
