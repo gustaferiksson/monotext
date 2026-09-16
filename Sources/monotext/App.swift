@@ -21,6 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate()
+        AppUpdater.check(manual: false)
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        AppUpdater.check(manual: true)
     }
 
     @objc func showSettings(_ sender: Any?) {
@@ -90,6 +95,7 @@ private func buildMainMenu() -> NSMenu {
 
     main.addItem(submenu("MonoText", [
         item("About MonoText", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+        item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:))),
         .separator(),
         item("Settings…", #selector(AppDelegate.showSettings(_:)), ","),
         .separator(),

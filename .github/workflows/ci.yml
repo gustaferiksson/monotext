@@ -1,0 +1,28 @@
+name: CI
+
+# Build-only validation. There is no test target — SPM cannot link tests against
+# an executable target — so this proves the app compiles and bundles, no more.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    name: Build (unsigned)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Bundle
+        run: ./bundle.sh release
+
+      - name: Verify the bundle
+        run: |
+          set -euo pipefail
+          test -f .build/MonoText.app/Contents/Resources/AppIcon.icns
+          id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" .build/MonoText.app/Contents/Info.plist)
+          [ "$id" = "dev.gustaf.monotext" ] || { echo "CFBundleIdentifier is '$id'"; exit 1; }

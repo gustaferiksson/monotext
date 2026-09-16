@@ -4,7 +4,13 @@ TextEdit without the rich text. A document-based macOS plain-text editor: no RTF
 no RTFD, no HTML, no Word, no ruler, no attachments — just text, an encoding, and
 a multi-cursor editor.
 
-## Running
+## Installing
+
+```sh
+brew install --cask gustaferiksson/tap/monotext
+```
+
+## Running from source
 
 ```sh
 ./run.sh
