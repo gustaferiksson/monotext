@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 private final class CaretUndoRecord {
     let before: [NSRange]
@@ -17,12 +16,16 @@ final class EditorTextView: NSTextView {
         let scroll = EditorTextView.scrollablePlainDocumentContentTextView()
         guard let view = scroll.documentView as? EditorTextView else { return scroll }
         view.allowsUndo = true
+        view.insertionPointColor = .clear
         view.applyWrapMode()
-        view.attachCapsule(to: scroll)
         return scroll
     }
 
     var wrapsToWindow = true { didSet { applyWrapMode() } }
+
+    var selectionSummaryChanged: ((String) -> Void)?
+
+    var selectionSummary: String { summaryText(for: caretStorage, in: text) }
 
     var carets: [NSRange] {
         get { caretStorage }
@@ -38,14 +41,17 @@ final class EditorTextView: NSTextView {
     private var pendingChord = false
     private var columnAnchor: Int?
     private var columnFocus: Int?
-    private var capsule: NSHostingView<CursorCapsule>?
+    private var focusObservers: [NSObjectProtocol] = []
+    private var publishedSummary: String?
+    private var headAtStart = false
 
     var primaryCaret: NSRange { caretStorage[min(primaryIndex, caretStorage.count - 1)] }
     private var text: NSString { textStorage?.mutableString ?? NSMutableString() }
 
     // MARK: - Caret store
 
-    private func apply(_ ranges: [NSRange], primaryHint: Int?, recordHistory: Bool = true) {
+    private func apply(_ ranges: [NSRange], primaryHint: Int?, recordHistory: Bool = true, headAtStart: Bool = false) {
+        self.headAtStart = headAtStart
         let normalized = normalizeCarets(ranges, length: text.length)
         let hint = primaryHint ?? primaryCaret.location
         if recordHistory, normalized != caretStorage { pushHistory() }
@@ -70,23 +76,25 @@ final class EditorTextView: NSTextView {
 
     private func refreshDecorations() {
         needsDisplay = true
-        capsule?.isHidden = caretStorage.count < 2
-        capsule?.rootView = CursorCapsule(text: capsuleLabel)
-        positionCapsule()
         updateCaretIndicators()
+        publishSelectionSummary()
     }
 
-    private var capsuleLabel: String {
-        let selecting = caretStorage.contains { $0.length > 0 }
-        return "\(caretStorage.count) \(selecting ? "selections" : "cursors")"
+    private func publishSelectionSummary() {
+        let summary = selectionSummary
+        guard summary != publishedSummary else { return }
+        publishedSummary = summary
+        selectionSummaryChanged?(summary)
     }
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
-        guard !mirroring, !fanningOut, !stillSelecting else { return }
+        defer { publishSelectionSummary() }
+        guard !mirroring, !fanningOut else { return }
         let incoming = ranges.map(\.rangeValue)
         guard incoming != caretStorage else { return }
-        if caretStorage.count > 1 { pushHistory() }
+        if caretStorage.count > 1, !stillSelecting { pushHistory() }
+        headAtStart = incoming[0].length > 0 && incoming[0].location != caretStorage[0].location
         caretStorage = normalizeCarets(incoming, length: text.length)
         primaryIndex = caretStorage.count - 1
         refreshDecorations()
@@ -99,6 +107,7 @@ final class EditorTextView: NSTextView {
     }
 
     private func fanOutMovement(_ body: (NSRange) -> Void) {
+        let caretsBefore = caretStorage
         fanningOut = true
         let results = caretStorage.map { caret -> NSRange in
             setPrimaryForFanOut(caret)
@@ -106,8 +115,9 @@ final class EditorTextView: NSTextView {
             return selectedRange()
         }
         fanningOut = false
-        let hint = results[min(primaryIndex, results.count - 1)].location
-        apply(results, primaryHint: hint)
+        let anchor = min(primaryIndex, results.count - 1)
+        let hint = results[anchor].location
+        apply(results, primaryHint: hint, headAtStart: results[anchor].location != caretsBefore[anchor].location)
         scrollRangeToVisible(primaryCaret)
     }
 
@@ -372,8 +382,8 @@ final class EditorTextView: NSTextView {
         let probe = lineOffset < 0 ? anchor.location : NSMaxRange(anchor)
         guard let rect = segmentRects(for: NSRange(location: probe, length: 0)).first else { return }
         let point = NSPoint(x: rect.midX, y: rect.midY + CGFloat(lineOffset) * rect.height)
-        guard point.y >= 0 else { return }
         let index = characterIndexForInsertion(at: point)
+        guard lineOffset < 0 ? index < probe : index > probe else { return }
         guard text.lineRange(for: NSRange(location: min(index, max(text.length - 1, 0)), length: 0))
             != text.lineRange(for: NSRange(location: min(probe, max(text.length - 1, 0)), length: 0)) else { return }
         let added = NSRange(location: index, length: 0)
@@ -519,7 +529,7 @@ final class EditorTextView: NSTextView {
             cursor = NSMaxRange(line)
         }
         guard !ranges.isEmpty else { return }
-        apply(ranges, primaryHint: focus)
+        apply(ranges, primaryHint: focus, headAtStart: focus < anchor)
         columnAnchor = anchor
         columnFocus = focus
     }
@@ -548,6 +558,7 @@ final class EditorTextView: NSTextView {
               let start = content.location(content.documentRange.location, offsetBy: range.location),
               let end = content.location(start, offsetBy: range.length),
               let textRange = NSTextRange(location: start, end: end) else { return [] }
+        layout.ensureLayout(for: textRange)
         let origin = textContainerOrigin
         var rects: [CGRect] = []
         layout.enumerateTextSegments(in: textRange, type: .selection, options: []) { _, rect, _, _ in
@@ -561,31 +572,41 @@ final class EditorTextView: NSTextView {
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard caretStorage.count > 1 else { return }
-        NSColor.selectedTextBackgroundColor.setFill()
+        (caretsAreVisible ? NSColor.selectedTextBackgroundColor : .unemphasizedSelectedTextBackgroundColor).setFill()
         for (index, caret) in caretStorage.enumerated() where index != primaryIndex && caret.length > 0 {
             for segment in segmentRects(for: caret) where segment.intersects(rect) { segment.fill() }
         }
     }
 
+    private var caretsAreVisible: Bool {
+        window?.isKeyWindow == true && window?.firstResponder === self
+    }
+
+    private func caretTip(_ caret: NSRange) -> NSRange {
+        NSRange(location: headAtStart ? caret.location : NSMaxRange(caret), length: 0)
+    }
+
     private func updateCaretIndicators() {
-        let tips = caretStorage.indices.compactMap { index -> NSRect? in
-            guard index != primaryIndex else { return nil }
-            let tip = NSRange(location: NSMaxRange(caretStorage[index]), length: 0)
-            return segmentRects(for: tip).first
-        }
-        while caretIndicators.count < tips.count {
+        while caretIndicators.count < caretStorage.count {
             let indicator = NSTextInsertionIndicator()
             addSubview(indicator)
             caretIndicators.append(indicator)
         }
-        for (index, indicator) in caretIndicators.enumerated() {
-            indicator.isHidden = index >= tips.count
-            guard index < tips.count else { continue }
-            indicator.frame = tips[index]
+        for (slot, indicator) in caretIndicators.enumerated() {
+            let tip = slot < caretStorage.count ? caretTip(caretStorage[slot]) : nil
+            guard let tip, let rect = segmentRects(for: tip).first else {
+                indicator.isHidden = true
+                indicator.frame = .zero
+                continue
+            }
+            indicator.frame = rect
+            indicator.isHidden = !caretsAreVisible
         }
     }
 
     // MARK: - Wrapping
+
+    private static let gutter = NSSize(width: 10, height: 8)
 
     private func applyWrapMode() {
         guard let container = textContainer else { return }
@@ -593,16 +614,18 @@ final class EditorTextView: NSTextView {
         guard wrapsToWindow else {
             let paper = NSPrintInfo.shared
             let width = paper.paperSize.width - paper.leftMargin - paper.rightMargin
+            textContainerInset = Self.gutter
             container.widthTracksTextView = false
             container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
             isHorizontallyResizable = true
             maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
             autoresizingMask = []
-            minSize = NSSize(width: width, height: 0)
-            setFrameSize(NSSize(width: width, height: frame.height))
+            minSize = NSSize(width: width + Self.gutter.width * 2, height: 0)
+            setFrameSize(NSSize(width: width + Self.gutter.width * 2, height: frame.height))
             scroll?.hasHorizontalScroller = true
             return
         }
+        textContainerInset = Self.gutter
         container.widthTracksTextView = true
         container.size = NSSize(width: scroll?.contentSize.width ?? frame.width, height: .greatestFiniteMagnitude)
         isHorizontallyResizable = false
@@ -613,21 +636,48 @@ final class EditorTextView: NSTextView {
         if let width = scroll?.contentSize.width { setFrameSize(NSSize(width: width, height: frame.height)) }
     }
 
-    // MARK: - Capsule
+    // MARK: - Focus and layout
 
-    private func attachCapsule(to scroll: NSScrollView) {
-        let host = NSHostingView(rootView: CursorCapsule(text: capsuleLabel))
-        host.sizingOptions = [.intrinsicContentSize]
-        host.isHidden = true
-        scroll.addSubview(host)
-        capsule = host
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        focusObservers.forEach(NotificationCenter.default.removeObserver)
+        focusObservers = []
+        guard let window else { return }
+        if let clip = enclosingScrollView?.contentView {
+            clip.postsBoundsChangedNotifications = true
+            focusObservers.append(observe(NSView.boundsDidChangeNotification, from: clip))
+        }
+        focusObservers.append(observe(NSWindow.didBecomeKeyNotification, from: window))
+        focusObservers.append(observe(NSWindow.didResignKeyNotification, from: window))
     }
 
-    private func positionCapsule() {
-        guard let host = capsule, let scroll = enclosingScrollView else { return }
-        let size = host.fittingSize
-        let bottom = scroll.isFlipped ? scroll.bounds.maxY - size.height - 16 : scroll.bounds.minY + 16
-        host.autoresizingMask = scroll.isFlipped ? [.minXMargin, .minYMargin] : [.minXMargin, .maxYMargin]
-        host.frame = NSRect(x: scroll.bounds.maxX - size.width - 16, y: bottom, width: size.width, height: size.height)
+    private func observe(_ name: Notification.Name, from object: AnyObject) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+            self?.updateCaretIndicators()
+        }
+    }
+
+    deinit { focusObservers.forEach(NotificationCenter.default.removeObserver) }
+
+    // NSTextView lays out legacily, so layout() never fires; this is the hook that follows
+    // scrolling, resizing and TextKit 2 finishing a viewport layout.
+    override func viewWillDraw() {
+        updateCaretIndicators()
+        super.viewWillDraw()
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        updateCaretIndicators()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        defer { updateCaretIndicators() }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        defer { updateCaretIndicators() }
+        return super.resignFirstResponder()
     }
 }

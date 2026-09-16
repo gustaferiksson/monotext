@@ -55,3 +55,45 @@ func nextOccurrence(after location: Int, of needle: String, in haystack: String,
     guard !free.isEmpty else { return nil }
     return free.first { $0.location >= location } ?? free.first
 }
+
+func summaryText(for ranges: [NSRange], in text: NSString) -> String {
+    guard let first = ranges.first else { return "Ln 1, Col 1" }
+    let lines = selectedLineCount(ranges, in: text)
+    let plural = lines == 1 ? "" : "s"
+    guard ranges.count > 1 else {
+        guard first.length > 0 else {
+            let line = text.lineRange(for: NSRange(location: min(first.location, max(text.length - 1, 0)), length: 0))
+            return "Ln \(lineNumber(of: first.location, in: text)), Col \(first.location - line.location + 1)"
+        }
+        return "\(lines) line\(plural) selected"
+    }
+    guard ranges.contains(where: { $0.length > 0 }) else { return "\(ranges.count) cursors" }
+    return "\(ranges.count) cursors · \(lines) line\(plural) selected"
+}
+
+private func selectedLineCount(_ ranges: [NSRange], in text: NSString) -> Int {
+    var lines = Set<Int>()
+    for range in ranges where range.length > 0 {
+        var cursor = range.location
+        let last = NSMaxRange(range) - 1
+        while cursor <= last {
+            let line = text.lineRange(for: NSRange(location: min(cursor, max(text.length - 1, 0)), length: 0))
+            lines.insert(line.location)
+            guard NSMaxRange(line) > cursor else { break }
+            cursor = NSMaxRange(line)
+        }
+    }
+    return lines.count
+}
+
+private func lineNumber(of location: Int, in text: NSString) -> Int {
+    var number = 1
+    var cursor = 0
+    while cursor < location {
+        let line = text.lineRange(for: NSRange(location: min(cursor, max(text.length - 1, 0)), length: 0))
+        guard NSMaxRange(line) <= location, NSMaxRange(line) > cursor else { break }
+        cursor = NSMaxRange(line)
+        number += 1
+    }
+    return number
+}

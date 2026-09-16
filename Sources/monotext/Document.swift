@@ -7,7 +7,7 @@ final class Document: NSDocument {
     private lazy var writeEncoding = Prefs.encoding(forKey: Prefs.savingEncoding)
 
     private var textView: EditorTextView? {
-        (windowControllers.first?.window?.contentView as? NSScrollView)?.documentView as? EditorTextView
+        (windowControllers.first as? DocumentWindowController)?.textView
     }
 
     override class var autosavesInPlace: Bool { true }
@@ -23,17 +23,9 @@ final class Document: NSDocument {
         let columns = CGFloat(defaults.integer(forKey: Prefs.windowWidth))
         let lines = CGFloat(defaults.integer(forKey: Prefs.windowHeight))
         let size = NSSize(width: columns * font.maximumAdvancement.width + 40,
-                          height: lines * NSLayoutManager().defaultLineHeight(for: font) + 20)
+                          height: lines * NSLayoutManager().defaultLineHeight(for: font) + 20 + statusBarHeight)
 
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                              backing: .buffered, defer: false)
-        window.contentView = scrollView
-        window.setContentSize(size)
-        window.center()
-        let controller = DocumentWindowController(window: window)
-        window.delegate = controller
-        addWindowController(controller)
+        addWindowController(DocumentWindowController(scrollView: scrollView, contentSize: size))
     }
 
     private func configure(_ textView: EditorTextView) {
@@ -120,9 +112,62 @@ final class Document: NSDocument {
     }
 }
 
+let statusBarHeight: CGFloat = 22
+
 final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
-    private var textView: EditorTextView? {
-        (window?.contentView as? NSScrollView)?.documentView as? EditorTextView
+    let textView: EditorTextView
+    private let summaryLabel = NSTextField(labelWithString: "")
+
+    init(scrollView: NSScrollView, contentSize: NSSize) {
+        textView = scrollView.documentView as! EditorTextView
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: contentSize),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                              backing: .buffered, defer: false)
+        super.init(window: window)
+
+        let content = NSView(frame: NSRect(origin: .zero, size: contentSize))
+        scrollView.frame = NSRect(x: 0, y: statusBarHeight, width: contentSize.width,
+                                  height: contentSize.height - statusBarHeight)
+        scrollView.autoresizingMask = [.width, .height]
+        content.addSubview(scrollView)
+        content.addSubview(makeStatusBar(width: contentSize.width))
+
+        window.contentView = content
+        window.setContentSize(contentSize)
+        window.center()
+        window.delegate = self
+
+        summaryLabel.stringValue = textView.selectionSummary
+        textView.selectionSummaryChanged = { [weak self] summary in
+            self?.summaryLabel.stringValue = summary
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    private func makeStatusBar(width: CGFloat) -> NSView {
+        let bar = NSBox(frame: NSRect(x: 0, y: 0, width: width, height: statusBarHeight))
+        bar.boxType = .custom
+        bar.borderWidth = 0
+        bar.cornerRadius = 0
+        bar.fillColor = .windowBackgroundColor
+        bar.contentViewMargins = .zero
+        bar.autoresizingMask = [.width, .maxYMargin]
+
+        let separator = NSBox(frame: NSRect(x: 0, y: statusBarHeight - 1, width: width, height: 1))
+        separator.boxType = .separator
+        separator.autoresizingMask = [.width, .minYMargin]
+
+        let margin: CGFloat = 12
+        summaryLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        summaryLabel.textColor = .secondaryLabelColor
+        summaryLabel.alignment = .right
+        summaryLabel.frame = NSRect(x: margin, y: 3, width: width - 2 * margin, height: 15)
+        summaryLabel.autoresizingMask = [.width, .minYMargin]
+
+        bar.addSubview(separator)
+        bar.addSubview(summaryLabel)
+        return bar
     }
 
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
@@ -130,12 +175,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSMe
     }
 
     @IBAction func toggleWrap(_ sender: Any?) {
-        guard let textView else { return }
         textView.wrapsToWindow.toggle()
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        guard item.action == #selector(toggleWrap(_:)), let textView else { return true }
+        guard item.action == #selector(toggleWrap(_:)) else { return true }
         item.title = textView.wrapsToWindow ? "Wrap to Page" : "Wrap to Window"
         return true
     }
