@@ -393,8 +393,10 @@ final class EditorTextView: NSTextView {
 
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(undoCursor(_:)), #selector(collapseCursors(_:)):
-            return caretStorage.count > 1 || !caretHistory.isEmpty
+        case #selector(collapseCursors(_:)):
+            return caretStorage.count > 1
+        case #selector(undoCursor(_:)):
+            return !caretHistory.isEmpty
         case #selector(addCursorAbove(_:)), #selector(addCursorBelow(_:)),
              #selector(addSelectionToNextFindMatch(_:)), #selector(moveLastSelectionToNextFindMatch(_:)),
              #selector(selectAllOccurrences(_:)), #selector(selectAllOccurrencesOfWord(_:)),

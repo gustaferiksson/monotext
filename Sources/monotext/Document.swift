@@ -68,6 +68,10 @@ final class Document: NSDocument {
         undoManager?.removeAllActions()
     }
 
+    override func writableTypes(for saveOperation: NSDocument.SaveOperationType) -> [String] {
+        ["public.plain-text"]
+    }
+
     override func data(ofType typeName: String) throws -> Data {
         let contents = textView?.string ?? text
         text = contents

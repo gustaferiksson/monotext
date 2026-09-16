@@ -26,6 +26,9 @@ Requires macOS 26 or later.
 | ⇧⌥I | Add Cursors to Line Ends |
 | ⌘U | Undo Last Cursor Operation |
 | ⎋ | Collapse to One Cursor |
+| ⌥click | Add or remove a cursor |
+| ⇧⌥drag | Column (rectangular) select |
+| ⇧⌥⌘↑↓←→ | Grow the column selection |
 
 ## Known limitations
 
