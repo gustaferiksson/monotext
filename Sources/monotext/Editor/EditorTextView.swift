@@ -606,7 +606,7 @@ final class EditorTextView: NSTextView {
 
     // MARK: - Wrapping
 
-    private static let gutter = NSSize(width: 10, height: 8)
+    private static let gutter = NSSize(width: 3, height: 8)
 
     private func applyWrapMode() {
         guard let container = textContainer else { return }
