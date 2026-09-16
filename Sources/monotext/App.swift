@@ -167,6 +167,11 @@ private func buildMainMenu() -> NSMenu {
             item("Stop Speaking", #selector(NSTextView.stopSpeaking(_:))),
         ]),
         .separator(),
+        item("Move Line Up", Selector(("moveLineUp:")), "\u{F700}", [.option]),
+        item("Move Line Down", Selector(("moveLineDown:")), "\u{F701}", [.option]),
+        item("Copy Line Up", Selector(("copyLineUp:")), "\u{F700}", [.option, .shift]),
+        item("Copy Line Down", Selector(("copyLineDown:")), "\u{F701}", [.option, .shift]),
+        .separator(),
         submenu("Selection", [
             item("Add Cursor Above", Selector(("addCursorAbove:")), "\u{F700}", [.command, .option]),
             item("Add Cursor Below", Selector(("addCursorBelow:")), "\u{F701}", [.command, .option]),
