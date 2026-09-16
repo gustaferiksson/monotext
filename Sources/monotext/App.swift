@@ -21,7 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate()
+#if !DEBUG
         AppUpdater.check(manual: false)
+#endif
     }
 
     @objc func checkForUpdates(_ sender: Any?) {
