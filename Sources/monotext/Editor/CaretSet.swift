@@ -101,10 +101,7 @@ private func lineNumber(of location: Int, in text: NSString) -> Int {
 func occurrenceNeedle(for carets: [NSRange], primary: Int, in text: NSString) -> String? {
     let preferred = carets.indices.contains(primary) && carets[primary].length > 0 ? carets[primary] : nil
     guard let selection = preferred ?? carets.first(where: { $0.length > 0 }) else { return nil }
-    let candidate = text.substring(with: selection)
-    guard !candidate.contains(where: \.isNewline) else { return nil }
-    guard candidate.contains(where: { !$0.isWhitespace }) else { return nil }
-    return candidate
+    return text.substring(with: selection)
 }
 
 func lineBlocks(for carets: [NSRange], in text: NSString) -> [NSRange] {
