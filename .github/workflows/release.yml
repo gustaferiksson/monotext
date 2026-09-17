@@ -1,16 +1,5 @@
 name: Release
 
-# On a version tag (v1.2.3) that lives on main: build the app, package a
-# Developer ID signed + notarized zip, attach it to a GitHub Release, and bump
-# the Homebrew cask in gustaferiksson/homebrew-tap.
-#
-# All of these secrets are required — the preflight step fails the run if any is
-# empty, so a release is never silently ad-hoc signed or left un-bumped:
-#   APPLE_CERT_P12        base64 of the exported "Developer ID Application" cert (.p12)
-#   APPLE_CERT_PASSWORD   password used when exporting that .p12
-#   NOTARY_APPLE_ID       Apple ID email for notarytool
-#   NOTARY_PASSWORD       app-specific password for that Apple ID
-#   TAP_GITHUB_TOKEN      token with write access to gustaferiksson/homebrew-tap
 on:
   push:
     tags: [ 'v*' ]
@@ -24,139 +13,13 @@ concurrency:
 
 jobs:
   release:
-    name: Build & release
-    runs-on: macos-26   # the deployment target is macOS 26 and needs that SDK
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          fetch-depth: 0   # the tag-on-main guard needs history
-
-      - name: Preflight — every release secret is set
-        env:
-          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          for name in APPLE_CERT_P12 APPLE_CERT_PASSWORD NOTARY_APPLE_ID NOTARY_PASSWORD TAP_GITHUB_TOKEN; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::secret $name is empty — refusing to release"
-              exit 1
-            fi
-          done
-
-      - name: Require the tag to be on main
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main — refusing to release"
-            exit 1
-          fi
-
-      - name: Resolve version from tag
-        id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Import signing certificate
-        env:
-          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
-          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
-          KEYCHAIN_PW="$(openssl rand -base64 24)"
-          echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
-          rm -f "$RUNNER_TEMP/cert.p12"
-          ID="$(security find-identity -v -p codesigning "$KEYCHAIN" \
-            | awk -F '"' '/Developer ID Application/{print $2; exit}')"
-          if [ -z "$ID" ]; then
-            echo "::error::no Developer ID Application identity in the imported keychain"
-            exit 1
-          fi
-          echo "Imported: $ID"
-          echo "SIGN_ID=$ID" >> "$GITHUB_ENV"
-
-      - name: Build and bundle
-        env:
-          VERSION: ${{ steps.ver.outputs.version }}
-          BUILD: ${{ github.run_number }}
-        run: |
-          set -euo pipefail
-          swift build -c release
-          ./bundle.sh release
-
-      - name: Sign
-        run: |
-          set -euo pipefail
-          codesign --force --options runtime --timestamp \
-            --sign "$SIGN_ID" .build/MonoText.app
-
-      - name: Notarize & staple
-        env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          NOTARY_TEAM_ID: "82K3YC8HVF"
-        run: |
-          set -euo pipefail
-          /usr/bin/ditto -c -k --keepParent .build/MonoText.app "$RUNNER_TEMP/notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
-            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
-            --password "$NOTARY_PASSWORD" --wait
-          xcrun stapler staple .build/MonoText.app
-
-      - name: Package the stapled app
-        id: pkg
-        run: |
-          set -euo pipefail
-          ZIP="MonoText-${{ steps.ver.outputs.version }}.zip"
-          /usr/bin/ditto -c -k --keepParent .build/MonoText.app "$ZIP"
-          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(shasum -a 256 "$ZIP" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-
-      - name: Verify the app is signed, notarized and stapled
-        run: |
-          set -euo pipefail
-          codesign --verify --strict --verbose=2 .build/MonoText.app
-          codesign -dvv .build/MonoText.app > "$RUNNER_TEMP/codesign.txt" 2>&1
-          grep -q 'Authority=Developer ID Application' "$RUNNER_TEMP/codesign.txt"
-          # No spctl here: GitHub runners disable Gatekeeper assessments, so
-          # spctl rejects even notarized artifacts. stapler validate is the
-          # offline notarization-ticket proof.
-          xcrun stapler validate .build/MonoText.app
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "${{ steps.pkg.outputs.zip }}" \
-            --title "MonoText ${{ steps.ver.outputs.version }}" \
-            --generate-notes
-
-      - name: Bump Homebrew cask
-        env:
-          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          SHA256: ${{ steps.pkg.outputs.sha256 }}
-        run: |
-          set -euo pipefail
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/gustaferiksson/homebrew-tap.git" tap
-          cd tap
-          sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/" Casks/monotext.rb
-          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" Casks/monotext.rb
-          grep -q "^  version \"$VERSION\"$" Casks/monotext.rb
-          grep -q "^  sha256 \"$SHA256\"$" Casks/monotext.rb
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "monotext $VERSION"
-          git push
+    uses: gustaferiksson/macos-release/.github/workflows/release.yml@main
+    secrets: inherit
+    with:
+      name: MonoText
+      app: .build/MonoText.app
+      cask: monotext
+      runner: macos-26
+      build: |
+        swift build -c release
+        ./bundle.sh release
