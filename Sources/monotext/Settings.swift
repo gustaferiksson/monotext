@@ -17,6 +17,7 @@ enum Prefs {
     static let openingEncoding = "PlainTextEncodingForRead"
     static let savingEncoding = "PlainTextEncodingForWrite"
     static let addTxtExtension = "AddExtensionToNewPlainTextFiles"
+    static let checksForUpdatesAutomatically = "ChecksForUpdatesAutomatically"
 
     static func register() {
         let fallback = NSFont.userFixedPitchFont(ofSize: 0) ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -36,6 +37,7 @@ enum Prefs {
             openingEncoding: 0,
             savingEncoding: 0,
             addTxtExtension: true,
+            checksForUpdatesAutomatically: true,
         ])
     }
 
@@ -67,6 +69,7 @@ private struct SettingsView: View {
         TabView {
             NewDocumentTab().tabItem { Text("New Document") }
             OpenAndSaveTab().tabItem { Text("Open and Save") }
+            UpdatesTab().tabItem { Text("Updates") }
         }
         .padding(20)
         .frame(width: 480, height: 430)
@@ -110,6 +113,21 @@ private struct NewDocumentTab: View {
                 Toggle("Smart dashes", isOn: $smartDashes)
                 Toggle("Smart links", isOn: $smartLinks)
                 Toggle("Text replacement", isOn: $textReplacement)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct UpdatesTab: View {
+    @AppStorage(Prefs.checksForUpdatesAutomatically) private var checksAutomatically = true
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Check for updates automatically", isOn: $checksAutomatically)
+            } footer: {
+                Text("MonoText checks github.com for a newer release when it starts. You can always check by hand from the MonoText menu.")
             }
         }
         .formStyle(.grouped)

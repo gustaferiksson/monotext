@@ -22,7 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate()
 #if !DEBUG
-        AppUpdater.check(manual: false)
+        if UserDefaults.standard.bool(forKey: Prefs.checksForUpdatesAutomatically) {
+            AppUpdater.check(manual: false)
+        }
 #endif
     }
 
