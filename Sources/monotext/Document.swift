@@ -29,13 +29,23 @@ final class Document: NSDocument {
     }
 
     private func configure(_ textView: EditorTextView) {
-        let defaults = UserDefaults.standard
         textView.font = Prefs.font
         textView.drawsBackground = true
         textView.backgroundColor = .textBackgroundColor
         textView.allowsUndo = true
         textView.usesFindBar = true
         textView.isIncrementalSearchingEnabled = true
+        Self.applyTypingPreferences(to: textView)
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification,
+                                               object: UserDefaults.standard,
+                                               queue: .main) { [weak textView] _ in
+            guard let textView else { return }
+            Self.applyTypingPreferences(to: textView)
+        }
+    }
+
+    private static func applyTypingPreferences(to textView: EditorTextView) {
+        let defaults = UserDefaults.standard
         textView.isContinuousSpellCheckingEnabled = defaults.bool(forKey: Prefs.checkSpelling)
         textView.isGrammarCheckingEnabled = defaults.bool(forKey: Prefs.checkGrammar)
         textView.isAutomaticSpellingCorrectionEnabled = defaults.bool(forKey: Prefs.correctSpelling)
