@@ -127,7 +127,7 @@ private struct UpdatesTab: View {
             Section {
                 Toggle("Check for updates automatically", isOn: $checksAutomatically)
             } footer: {
-                Text("MonoText checks github.com for a newer release when it starts. You can always check by hand from the MonoText menu.")
+                Text("MonoText checks github.com for a newer release when it starts and once a day, and notifies you when one is out. You can always check by hand from the MonoText menu.")
             }
         }
         .formStyle(.grouped)

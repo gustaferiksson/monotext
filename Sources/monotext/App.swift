@@ -1,6 +1,7 @@
 import AppKit
 
 @main
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static func main() {
         let app = NSApplication.shared
@@ -12,24 +13,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private lazy var settingsWindow = makeSettingsWindow()
+    private let updater = AppUpdater()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Prefs.register()
         NSApp.mainMenu = buildMainMenu()
         NSFontManager.shared.target = self
+#if !DEBUG
+        updater.start()
+#endif
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate()
-#if !DEBUG
-        if UserDefaults.standard.bool(forKey: Prefs.checksForUpdatesAutomatically) {
-            AppUpdater.check(manual: false)
-        }
-#endif
     }
 
     @objc func checkForUpdates(_ sender: Any?) {
-        AppUpdater.check(manual: true)
+        updater.check()
     }
 
     @objc func showSettings(_ sender: Any?) {

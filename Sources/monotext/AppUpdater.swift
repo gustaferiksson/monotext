@@ -1,6 +1,8 @@
 import AppKit
+import UserNotifications
 
-enum AppUpdater {
+@MainActor
+final class AppUpdater: NSObject, UNUserNotificationCenterDelegate {
     private static let appName = "MonoText"
     private static let latestAPI =
         URL(string: "https://api.github.com/repos/gustaferiksson/monotext/releases/latest")!
@@ -19,23 +21,79 @@ enum AppUpdater {
     /// Must stay false for a bare `swift build` binary, or the swap would rename the build directory.
     private static var isSelfUpdatable: Bool { Bundle.main.bundleURL.pathExtension == "app" }
 
-    static func check(manual: Bool) {
-        guard let current = currentVersion else { return }
-        clearStaging()
-        Task { @MainActor in
-            guard let latest = await fetchLatest() else {
-                if manual { alert("Update check failed", "Could not reach github.com.") }
-                return
-            }
-            guard isNewer(latest.version, than: current) else {
-                if manual { alert("You’re up to date", "\(appName) \(current) is the latest version.") }
-                return
-            }
-            offer(version: latest.version, asset: latest.asset, page: latest.page)
+    private static let checkInterval: TimeInterval = 24 * 60 * 60
+
+    private var notified: Set<String> = []
+
+    /// Must run before launch finishes, or a click on a notification that launched the app is lost.
+    func start() {
+        guard Self.isSelfUpdatable else { return }
+        Self.clearStaging()
+        UNUserNotificationCenter.current().delegate = self
+        checkInBackground()
+        Timer.scheduledTimer(withTimeInterval: Self.checkInterval, repeats: true) { _ in
+            Task { @MainActor in self.checkInBackground() }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in self.checkInBackground() }
         }
     }
 
-    @MainActor
+    func check() {
+        guard let current = Self.currentVersion else { return }
+        Task {
+            guard let latest = await Self.fetchLatest() else {
+                Self.alert("Update check failed", "Could not reach github.com.")
+                return
+            }
+            guard Self.isNewer(latest.version, than: current) else {
+                Self.alert("You’re up to date", "\(Self.appName) \(current) is the latest version.")
+                return
+            }
+            Self.offer(version: latest.version, asset: latest.asset, page: latest.page)
+        }
+    }
+
+    private func checkInBackground() {
+        guard UserDefaults.standard.bool(forKey: Prefs.checksForUpdatesAutomatically),
+              let current = Self.currentVersion
+        else { return }
+        Task {
+            guard let latest = await Self.fetchLatest(),
+                  Self.isNewer(latest.version, than: current),
+                  notified.insert(latest.version).inserted
+            else { return }
+            if await !Self.notify(version: latest.version) {
+                Self.offer(version: latest.version, asset: latest.asset, page: latest.page)
+            }
+        }
+    }
+
+    private static func notify(version: String) async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        guard (try? await center.requestAuthorization(options: [.alert])) == true else { return false }
+        let content = UNMutableNotificationContent()
+        content.title = "\(appName) \(version) is available"
+        content.body = "Click to install it."
+        let request = UNNotificationRequest(identifier: "update", content: content, trigger: nil)
+        return (try? await center.add(request)) != nil
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
+    ) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+        await check()
+    }
+
     private static func offer(version: String, asset: URL?, page: URL) {
         let installable = asset != nil && isSelfUpdatable
             && FileManager.default.isWritableFile(atPath: installDir.path)
@@ -54,7 +112,6 @@ enum AppUpdater {
         install(version: version, asset: asset, page: page)
     }
 
-    @MainActor
     private static func install(version: String, asset: URL, page: URL) {
         Task { @MainActor in
             do {
@@ -68,7 +125,6 @@ enum AppUpdater {
         }
     }
 
-    @MainActor
     private static func failed(_ reason: String, page: URL) {
         let panel = NSAlert()
         panel.messageText = "\(appName) could not install the update"
@@ -79,7 +135,6 @@ enum AppUpdater {
         NSWorkspace.shared.open(page)
     }
 
-    @MainActor
     private static func alert(_ title: String, _ body: String) {
         let panel = NSAlert()
         panel.messageText = title
