@@ -45,8 +45,6 @@ Requires macOS 26 or later.
 - **Secondary carets blink out of phase** with the primary one. macOS draws the
   primary with `NSTextInsertionIndicator`, which exposes no blink phase to sync to.
   Under Reduce Motion nothing blinks.
-- **Cut with multiple empty carets deletes nothing.** VS Code cuts the whole line;
-  cut with actual selections is correct.
 - **⌘K is held as a chord prefix** for a second, so it cannot also be a menu shortcut.
 - **Column select drag, ⌥click and the ⌘K ⌘D chord are unverified by test** — this
   machine grants no assistive access, so synthetic mouse and key events are
