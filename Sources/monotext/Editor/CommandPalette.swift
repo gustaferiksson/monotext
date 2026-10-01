@@ -93,7 +93,6 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
     private let separator = NSBox()
     private let scroll = NSScrollView()
     private let table = NSTableView()
-    private let border = NSBox()
     private var commands: [PaletteCommand] = []
     private var rows: [Row] = []
     private var highlighted = -1
@@ -112,7 +111,7 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = .systemFont(ofSize: 15)
+        field.font = .preferredFont(forTextStyle: .title3)
         field.placeholderString = "Type a command"
         field.cell?.isScrollable = true
         field.cell?.wraps = false
@@ -144,14 +143,8 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
 
-        border.boxType = .custom
-        border.titlePosition = .noTitle
-        border.fillColor = .clear
-        border.borderColor = NSColor.labelColor.withAlphaComponent(0.1)
-        border.cornerRadius = 12
-
         let content = NSView()
-        [field, separator, scroll, border].forEach(content.addSubview)
+        [field, separator, scroll].forEach(content.addSubview)
         let glass = NSGlassEffectView()
         glass.cornerRadius = 12
         glass.contentView = content
@@ -168,7 +161,6 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         } ?? []
         host = window
         field.stringValue = ""
-        border.borderWidth = 1 / window.backingScaleFactor
         refilter()
         let target = panel.frame
         let animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -177,6 +169,7 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         window.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(field)
+        panel.invalidateShadow()
         guard animates else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
@@ -273,8 +266,8 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         field.frame = NSRect(x: 14, y: height - (Self.fieldHeight + fieldLine) / 2, width: width - 28, height: fieldLine)
         separator.frame = NSRect(x: 0, y: height - Self.fieldHeight - 1, width: width, height: 1)
         scroll.frame = NSRect(x: 0, y: Self.listInset, width: width, height: listHeight)
-        border.frame = NSRect(x: 0, y: 0, width: width, height: height)
         table.sizeLastColumnToFit()
+        panel.displayIfNeeded()
         panel.invalidateShadow()
     }
 
@@ -329,27 +322,27 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         switch rows[row] {
         case .header(let title):
             let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
             label.textColor = .tertiaryLabelColor
             pin(label, in: cell, verticalOffset: 3)
         case .empty:
             let label = NSTextField(labelWithString: "No matching commands")
-            label.font = .systemFont(ofSize: 13)
+            label.font = .systemFont(ofSize: NSFont.systemFontSize)
             label.textColor = .secondaryLabelColor
             pin(label, in: cell, verticalOffset: 0)
         case .command(let command, let matches):
             let selected = row == tableView.selectedRow
             let primary = selected ? NSColor.alternateSelectedControlTextColor : .labelColor
             let secondary = selected ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75) : .secondaryLabelColor
-            let title = NSMutableAttributedString(string: command.label, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: primary])
+            let title = NSMutableAttributedString(string: command.label, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize), .foregroundColor: primary])
             title.addAttribute(.foregroundColor, value: secondary, range: NSRange(location: 0, length: command.pathLength))
-            matches.forEach { title.addAttribute(.font, value: NSFont.systemFont(ofSize: 13, weight: .semibold), range: $0) }
+            matches.forEach { title.addAttribute(.font, value: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold), range: $0) }
             let label = NSTextField(labelWithAttributedString: title)
             label.lineBreakMode = .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             pin(label, in: cell, verticalOffset: 0)
             let shortcut = NSTextField(labelWithString: command.shortcut)
-            shortcut.font = .systemFont(ofSize: 11)
+            shortcut.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             shortcut.textColor = selected ? .alternateSelectedControlTextColor : .secondaryLabelColor
             shortcut.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(shortcut)
