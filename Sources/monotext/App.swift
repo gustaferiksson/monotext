@@ -127,7 +127,7 @@ private func buildMainMenu() -> NSMenu {
         item("Move To…", #selector(NSDocument.move(_:))),
         submenu("Revert To", [item("Browse All Versions…", #selector(NSDocument.browseVersions(_:)))]),
         .separator(),
-        item("Page Setup…", #selector(NSApplication.runPageLayout(_:)), "p", [.command, .shift]),
+        item("Page Setup…", #selector(NSApplication.runPageLayout(_:))),
         item("Print…", #selector(NSDocument.printDocument(_:)), "p"),
     ]))
 
@@ -203,6 +203,8 @@ private func buildMainMenu() -> NSMenu {
             .separator(),
             item("Collapse to One Cursor", Selector(("collapseCursors:")), "\u{1b}", []),
         ]),
+        .separator(),
+        item("Command Palette…", #selector(DocumentWindowController.showCommandPalette(_:)), "p", [.command, .shift]),
     ]))
 
     let showFonts = item("Show Fonts", #selector(NSFontManager.orderFrontFontPanel(_:)), "t")
