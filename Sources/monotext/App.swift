@@ -188,7 +188,7 @@ private func buildMainMenu() -> NSMenu {
             item("Add Next Occurrence", Selector(("addSelectionToNextFindMatch:")), "d"),
             item("Move Last Selection to Next Occurrence", Selector(("moveLastSelectionToNextFindMatch:"))),
             item("Select All Occurrences", Selector(("selectAllOccurrences:")), "l", [.command, .shift]),
-            item("Select All Occurrences of Word", Selector(("selectAllOccurrencesOfWord:")), "\u{F705}"),
+            item("Change All Occurrences", Selector(("selectAllOccurrences:")), "\u{F705}"),
             item("Add Cursors to Line Ends", Selector(("addCursorsToLineEnds:")), "i", [.option, .shift]),
             item("Undo Last Cursor Operation", Selector(("undoCursor:")), "u"),
             .separator(),

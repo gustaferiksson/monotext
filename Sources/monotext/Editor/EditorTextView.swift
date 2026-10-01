@@ -47,6 +47,7 @@ final class EditorTextView: NSTextView {
     private var addCursorGoalX: CGFloat?
     private var textRevision = 0
     private var occurrenceCache: (key: String, matches: [NSRange])?
+    private var findSession: (needle: String, matching: OccurrenceMatching, carets: [NSRange])?
 
     var primaryCaret: NSRange { caretStorage[min(primaryIndex, caretStorage.count - 1)] }
     private var text: NSString { textStorage?.mutableString ?? NSMutableString() }
@@ -300,68 +301,53 @@ final class EditorTextView: NSTextView {
 
     // MARK: - Multi-cursor commands
 
-    private func wordRange(at location: Int) -> NSRange {
-        guard text.length > 0 else { return NSRange(location: 0, length: 0) }
-        let probe = NSRange(location: min(location, text.length - 1), length: 0)
-        return selectionRange(forProposedRange: probe, granularity: .selectByWord)
-    }
-
-    private func currentNeedle() -> (String, Bool)? {
+    private func findQuery() -> (needle: String, matching: OccurrenceMatching, word: NSRange?)? {
+        if let session = findSession, session.carets == caretStorage { return (session.needle, session.matching, nil) }
         let primary = primaryCaret
-        guard primary.length > 0 else {
-            let word = wordRange(at: primary.location)
-            guard word.length > 0 else { return nil }
-            return (text.substring(with: word), true)
-        }
-        return (text.substring(with: primary), NSEqualRanges(primary, wordRange(at: primary.location)))
+        guard primary.length == 0 else { return (text.substring(with: primary), .substringIgnoreCase, nil) }
+        guard let word = wordRange(touching: primary.location, in: text) else { return nil }
+        return (text.substring(with: word), caretStorage.count == 1 ? .wholeWordMatchCase : .substringIgnoreCase, word)
     }
 
     @objc func addSelectionToNextFindMatch(_ sender: Any?) {
-        guard primaryCaret.length > 0 else {
+        let primaryText = text.substring(with: primaryCaret).lowercased()
+        let caretsShareText = primaryCaret.length > 0 && caretStorage.allSatisfy { text.substring(with: $0).lowercased() == primaryText }
+        guard findSession?.carets == caretStorage || caretStorage.count == 1 || caretsShareText else {
             expandCaretsToWords()
             return
         }
-        guard let (word, wordBoundaries) = currentNeedle() else { return }
-        let after = NSMaxRange(caretStorage.last ?? primaryCaret)
-        guard let match = nextOccurrence(after: after, of: word, in: text, wordBoundaries: wordBoundaries, excluding: caretStorage) else { return }
+        guard let query = findQuery(),
+              let match = query.word ?? nextOccurrence(after: NSMaxRange(primaryCaret), of: query.needle, in: text, matching: query.matching)
+        else { return }
         apply(caretStorage + [match], primaryHint: match.location)
+        findSession = (query.needle, query.matching, caretStorage)
         scrollRangeToVisible(match)
     }
 
     @objc func moveLastSelectionToNextFindMatch(_ sender: Any?) {
-        guard primaryCaret.length > 0 else {
-            expandCaretsToWords()
-            return
-        }
-        guard let (word, wordBoundaries) = currentNeedle() else { return }
-        let after = NSMaxRange(primaryCaret)
-        guard let match = nextOccurrence(after: after, of: word, in: text, wordBoundaries: wordBoundaries, excluding: caretStorage) else { return }
+        guard let query = findQuery(),
+              let match = query.word ?? nextOccurrence(after: NSMaxRange(primaryCaret), of: query.needle, in: text, matching: query.matching)
+        else { return }
         var updated = caretStorage
         updated[min(primaryIndex, updated.count - 1)] = match
         apply(updated, primaryHint: match.location)
+        findSession = (query.needle, query.matching, caretStorage)
         scrollRangeToVisible(match)
     }
 
     private func expandCaretsToWords() {
-        let words = caretStorage.map { $0.length > 0 ? $0 : wordRange(at: $0.location) }
+        let words = caretStorage.map { $0.length > 0 ? $0 : wordRange(touching: $0.location, in: text) ?? $0 }
         apply(words, primaryHint: words[min(primaryIndex, words.count - 1)].location)
     }
 
     @objc func selectAllOccurrences(_ sender: Any?) {
-        guard let (word, wordBoundaries) = currentNeedle() else { return }
-        selectEvery(word, wordBoundaries: wordBoundaries)
-    }
-
-    @objc func selectAllOccurrencesOfWord(_ sender: Any?) {
-        let word = wordRange(at: primaryCaret.location)
-        guard word.length > 0 else { return }
-        selectEvery(text.substring(with: word), wordBoundaries: true)
-    }
-
-    private func selectEvery(_ word: String, wordBoundaries: Bool) {
-        let matches = occurrences(of: word, in: text, wordBoundaries: wordBoundaries)
+        guard let query = findQuery() else { return }
+        let matches = occurrences(of: query.needle, in: text, matching: query.matching)
         guard !matches.isEmpty else { return }
-        apply(matches, primaryHint: matches.last?.location)
+        let primary = primaryCaret
+        let primaryMatch = matches.first { $0.location <= NSMaxRange(primary) && primary.location <= NSMaxRange($0) } ?? matches[0]
+        apply(matches, primaryHint: primaryMatch.location)
+        findSession = (query.needle, query.matching, caretStorage)
     }
 
     @objc func addCursorsToLineEnds(_ sender: Any?) {
@@ -540,7 +526,7 @@ final class EditorTextView: NSTextView {
             return !caretHistory.isEmpty
         case #selector(addCursorAbove(_:)), #selector(addCursorBelow(_:)),
              #selector(addSelectionToNextFindMatch(_:)), #selector(moveLastSelectionToNextFindMatch(_:)),
-             #selector(selectAllOccurrences(_:)), #selector(selectAllOccurrencesOfWord(_:)),
+             #selector(selectAllOccurrences(_:)),
              #selector(addCursorsToLineEnds(_:)):
             return isEditable || isSelectable
         case #selector(moveLineUp(_:)), #selector(moveLineDown(_:)),
@@ -709,11 +695,12 @@ final class EditorTextView: NSTextView {
     func occurrenceMatches() -> [NSRange] {
         guard caretsAreVisible, let needle = occurrenceNeedle(for: caretStorage, primary: primaryIndex, in: text) else { return [] }
         let scope = visibleCharacterRange()
-        let key = "\(textRevision)|\(scope)|\(needle)"
+        let matching = findSession.flatMap { $0.carets == caretStorage ? $0.matching : nil } ?? .substringIgnoreCase
+        let key = "\(textRevision)|\(scope)|\(matching)|\(needle)"
         // Only the search is cached; the caret exclusion is a cheap filter over the visible
         // matches and must follow a caret set that moves without changing the needle.
         let cached = occurrenceCache?.key == key ? occurrenceCache?.matches : nil
-        let found = cached ?? occurrences(of: needle, in: text, wordBoundaries: false, within: scope)
+        let found = cached ?? occurrences(of: needle, in: text, matching: matching, within: scope)
         occurrenceCache = (key, found)
         return found.filter { match in !caretStorage.contains { NSIntersectionRange($0, match).length > 0 } }
     }
@@ -862,6 +849,7 @@ final class EditorTextView: NSTextView {
     override func resignFirstResponder() -> Bool {
         guard super.resignFirstResponder() else { return false }
         isFocused = false
+        findSession = nil
         focusChanged()
         return true
     }
