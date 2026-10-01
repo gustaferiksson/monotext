@@ -93,6 +93,7 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
     private let separator = NSBox()
     private let scroll = NSScrollView()
     private let table = NSTableView()
+    private let border = NSBox()
     private var commands: [PaletteCommand] = []
     private var rows: [Row] = []
     private var highlighted = -1
@@ -102,7 +103,7 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         super.init()
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.isMovable = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
@@ -143,12 +144,20 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
 
-        let content = NSView()
-        [field, separator, scroll].forEach(content.addSubview)
-        let glass = NSGlassEffectView()
-        glass.cornerRadius = 12
-        glass.contentView = content
-        panel.contentView = glass
+        border.boxType = .custom
+        border.titlePosition = .noTitle
+        border.fillColor = .clear
+        border.borderColor = NSColor.labelColor.withAlphaComponent(0.1)
+        border.cornerRadius = 12
+
+        let background = NSVisualEffectView()
+        background.material = .popover
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 12
+        background.layer?.masksToBounds = true
+        [field, separator, scroll, border].forEach(background.addSubview)
+        panel.contentView = background
     }
 
     func toggle(over window: NSWindow) {
@@ -161,6 +170,7 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         } ?? []
         host = window
         field.stringValue = ""
+        border.borderWidth = 1 / window.backingScaleFactor
         refilter()
         let target = panel.frame
         let animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -169,7 +179,6 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         window.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(field)
-        panel.invalidateShadow()
         guard animates else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
@@ -266,9 +275,8 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         field.frame = NSRect(x: 14, y: height - (Self.fieldHeight + fieldLine) / 2, width: width - 28, height: fieldLine)
         separator.frame = NSRect(x: 0, y: height - Self.fieldHeight - 1, width: width, height: 1)
         scroll.frame = NSRect(x: 0, y: Self.listInset, width: width, height: listHeight)
+        border.frame = NSRect(x: 0, y: 0, width: width, height: height)
         table.sizeLastColumnToFit()
-        panel.displayIfNeeded()
-        panel.invalidateShadow()
     }
 
     private func moveSelection(by step: Int) {
