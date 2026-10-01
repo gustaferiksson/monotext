@@ -419,14 +419,14 @@ final class EditorTextView: NSTextView {
         return text.lineRange(for: NSRange(location: after, length: 0))
     }
 
-    private func replaceCharacters(in range: NSRange, with string: String) -> Bool {
+    func replaceCharacters(in range: NSRange, with string: String) -> Bool {
         guard shouldChangeText(in: range, replacementString: string) else { return false }
         textStorage?.replaceCharacters(in: range, with: string)
         didChangeText()
         return true
     }
 
-    private func beginLineEdit() -> CaretUndoRecord {
+    func beginLineEdit() -> CaretUndoRecord {
         let record = CaretUndoRecord(before: caretStorage, primary: primaryIndex)
         undoManager?.beginUndoGrouping()
         registerCaretUndo(record, restoringBefore: true)
@@ -434,7 +434,7 @@ final class EditorTextView: NSTextView {
         return record
     }
 
-    private func endLineEdit(_ record: CaretUndoRecord, _ results: [NSRange]) {
+    func endLineEdit(_ record: CaretUndoRecord, _ results: [NSRange]) {
         fanningOut = false
         undoManager?.endUndoGrouping()
         record.after = results
