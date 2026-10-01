@@ -27,7 +27,7 @@ Requires macOS 26 or later.
 | ⌥⌘↓ | Add Cursor Below |
 | ⌘D | Add Next Occurrence |
 | ⇧⌘L | Select All Occurrences |
-| ⌘F2 | Select All Occurrences of Word |
+| ⌘F2 | Change All Occurrences |
 | ⇧⌥I | Add Cursors to Line Ends |
 | ⌘U | Undo Last Cursor Operation |
 | ⎋ | Collapse to One Cursor |

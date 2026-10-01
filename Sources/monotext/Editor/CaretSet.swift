@@ -23,41 +23,54 @@ private func caretOrder(_ a: NSRange, _ b: NSRange) -> Bool {
     a.location == b.location ? a.length < b.length : a.location < b.location
 }
 
-func occurrences(of needle: String, in text: NSString, wordBoundaries: Bool, within limit: NSRange? = nil) -> [NSRange] {
+enum OccurrenceMatching {
+    case wholeWordMatchCase
+    case substringIgnoreCase
+}
+
+func occurrences(of needle: String, in text: NSString, matching: OccurrenceMatching, within limit: NSRange? = nil) -> [NSRange] {
     guard !needle.isEmpty else { return [] }
     let bounds = limit ?? NSRange(location: 0, length: text.length)
+    let options: NSString.CompareOptions = matching == .wholeWordMatchCase ? [.literal] : [.literal, .caseInsensitive]
     var found: [NSRange] = []
     var searchStart = bounds.location
     while searchStart < NSMaxRange(bounds) {
         let scope = NSRange(location: searchStart, length: NSMaxRange(bounds) - searchStart)
-        let hit = text.range(of: needle, options: [.literal], range: scope)
+        let hit = text.range(of: needle, options: options, range: scope)
         guard hit.location != NSNotFound else { break }
-        guard !wordBoundaries || isWholeWord(hit, in: text) else {
-            searchStart = hit.location + 1
-            continue
-        }
-        found.append(hit)
         searchStart = NSMaxRange(hit)
+        guard matching == .substringIgnoreCase || isWholeWord(hit, in: text) else { continue }
+        found.append(hit)
     }
     return found
 }
 
-private func isWholeWord(_ range: NSRange, in text: NSString) -> Bool {
-    let wordCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
-    let isWordCharacter = { (index: Int) -> Bool in
-        guard let scalar = Unicode.Scalar(text.character(at: index)) else { return false }
-        return wordCharacters.contains(scalar)
-    }
-    if range.location > 0, isWordCharacter(range.location), isWordCharacter(range.location - 1) { return false }
-    let after = NSMaxRange(range)
-    return after >= text.length || !isWordCharacter(after - 1) || !isWordCharacter(after)
+// VS Code's default editor.wordSeparators plus the characters it classes as whitespace.
+private let wordSeparators = CharacterSet(charactersIn: "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/? \t\r\n")
+
+private func isWordCharacter(at index: Int, in text: NSString) -> Bool {
+    guard let scalar = Unicode.Scalar(text.character(at: index)) else { return true }
+    return !wordSeparators.contains(scalar)
 }
 
-func nextOccurrence(after location: Int, of needle: String, in text: NSString, wordBoundaries: Bool, excluding taken: [NSRange]) -> NSRange? {
-    let all = occurrences(of: needle, in: text, wordBoundaries: wordBoundaries)
-    let free = all.filter { candidate in !taken.contains { NSEqualRanges($0, candidate) } }
-    guard !free.isEmpty else { return nil }
-    return free.first { $0.location >= location } ?? free.first
+private func isWholeWord(_ range: NSRange, in text: NSString) -> Bool {
+    if range.location > 0, isWordCharacter(at: range.location - 1, in: text) { return false }
+    let after = NSMaxRange(range)
+    return after >= text.length || !isWordCharacter(at: after, in: text)
+}
+
+func wordRange(touching location: Int, in text: NSString) -> NSRange? {
+    var start = location
+    while start > 0, isWordCharacter(at: start - 1, in: text) { start -= 1 }
+    var end = location
+    while end < text.length, isWordCharacter(at: end, in: text) { end += 1 }
+    return end > start ? NSRange(location: start, length: end - start) : nil
+}
+
+func nextOccurrence(after location: Int, of needle: String, in text: NSString, matching: OccurrenceMatching) -> NSRange? {
+    let rest = NSRange(location: location, length: text.length - location)
+    return occurrences(of: needle, in: text, matching: matching, within: rest).first
+        ?? occurrences(of: needle, in: text, matching: matching).first
 }
 
 func summaryText(for ranges: [NSRange], in text: NSString) -> String {
@@ -103,9 +116,11 @@ private func lineNumber(of location: Int, in text: NSString) -> Int {
 }
 
 func occurrenceNeedle(for carets: [NSRange], primary: Int, in text: NSString) -> String? {
-    let preferred = carets.indices.contains(primary) && carets[primary].length > 0 ? carets[primary] : nil
-    guard let selection = preferred ?? carets.first(where: { $0.length > 0 }) else { return nil }
-    return text.substring(with: selection)
+    let selection = carets[min(primary, carets.count - 1)]
+    guard selection.length > 0, selection.length <= 200 else { return nil }
+    let needle = text.substring(with: selection)
+    guard carets.allSatisfy({ text.substring(with: $0).lowercased() == needle.lowercased() }) else { return nil }
+    return needle
 }
 
 func lineBlocks(for carets: [NSRange], in text: NSString) -> [NSRange] {
