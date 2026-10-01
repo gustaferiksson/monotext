@@ -1,11 +1,10 @@
 import AppKit
 
-func fuzzyMatch(_ query: String, in candidate: String) -> (score: Int, ranges: [NSRange])? {
+func fuzzyMatch(_ query: String, in candidate: String) -> Int? {
     let needle = query.filter { !$0.isWhitespace }.map { $0.lowercased() }
     let characters = Array(candidate)
     guard !needle.isEmpty, needle.count <= characters.count else { return nil }
     let lowered = characters.map { $0.lowercased() }
-    let offsets = characters.reduce(into: [0]) { $0.append($0[$0.count - 1] + $1.utf16.count) }
     let bonus = characters.indices.map { index -> Int in
         guard index > 0 else { return 10 }
         let previous = characters[index - 1]
@@ -13,7 +12,6 @@ func fuzzyMatch(_ query: String, in candidate: String) -> (score: Int, ranges: [
         return previous.isLowercase && characters[index].isUppercase ? 8 : 0
     }
     var best = [[Int?]](repeating: [Int?](repeating: nil, count: characters.count), count: needle.count)
-    var parent = [[Int]](repeating: [Int](repeating: -1, count: characters.count), count: needle.count)
     for step in needle.indices {
         for index in characters.indices where lowered[index] == needle[step] {
             guard step > 0 else {
@@ -23,19 +21,11 @@ func fuzzyMatch(_ query: String, in candidate: String) -> (score: Int, ranges: [
             for prior in 0..<index {
                 guard let score = best[step - 1][prior] else { continue }
                 let total = score + 1 + bonus[index] + (prior == index - 1 ? 6 : -min(index - prior - 1, 5))
-                guard total > (best[step][index] ?? .min) else { continue }
-                best[step][index] = total
-                parent[step][index] = prior
+                best[step][index] = max(total, best[step][index] ?? .min)
             }
         }
     }
-    let last = needle.count - 1
-    guard let (end, score) = characters.indices.compactMap({ index in best[last][index].map { (index, $0) } })
-        .max(by: { $0.1 < $1.1 }) else { return nil }
-    var matched = [end]
-    for step in stride(from: last, to: 0, by: -1) { matched.append(parent[step][matched[matched.count - 1]]) }
-    let ranges = matched.reversed().map { NSRange(location: offsets[$0], length: offsets[$0 + 1] - offsets[$0]) }
-    return (score, ranges)
+    return best[needle.count - 1].compactMap { $0 }.max()
 }
 
 func shortcutGlyphs(key: String, modifiers: NSEvent.ModifierFlags) -> String {
@@ -68,32 +58,31 @@ private final class PalettePanel: NSPanel {
 private final class PaletteRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         NSColor.selectedContentBackgroundColor.setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 0), xRadius: 7, yRadius: 7).fill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 5, yRadius: 5).fill()
     }
 }
 
 @MainActor
-final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class CommandPalette: NSObject, NSWindowDelegate, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     static let shared = CommandPalette()
 
     private enum Row {
         case header(String)
-        case command(PaletteCommand, [NSRange])
+        case command(PaletteCommand)
         case empty
     }
 
-    private static let fieldHeight: CGFloat = 44
-    private static let rowHeight: CGFloat = 30
-    private static let headerHeight: CGFloat = 28
-    private static let listInset: CGFloat = 6
-    private static let maxVisibleRows: CGFloat = 8
+    private static let rowHeight: CGFloat = 24
+    private static let separatorHeight: CGFloat = 11
+    private static let menuInset: CGFloat = 5
+    private static let cornerRadius: CGFloat = 10
+    private static let maxVisibleRows = 8
 
     private let panel = PalettePanel(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
-    private let field = NSTextField()
+    private let field = NSSearchField()
     private let separator = NSBox()
     private let scroll = NSScrollView()
     private let table = NSTableView()
-    private let border = NSBox()
     private var commands: [PaletteCommand] = []
     private var rows: [Row] = []
     private var highlighted = -1
@@ -103,19 +92,17 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         super.init()
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.isMovable = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
         panel.delegate = self
 
-        field.isBezeled = false
-        field.drawsBackground = false
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .small))
         field.focusRingType = .none
-        field.font = .preferredFont(forTextStyle: .title3)
-        field.placeholderString = "Type a command"
-        field.cell?.isScrollable = true
-        field.cell?.wraps = false
+        field.placeholderString = "Search commands"
+        field.sizeToFit()
         field.delegate = self
 
         separator.boxType = .separator
@@ -124,6 +111,7 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
         table.headerView = nil
+        table.rowHeight = Self.rowHeight
         table.style = .plain
         table.backgroundColor = .clear
         table.intercellSpacing = .zero
@@ -144,19 +132,21 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         scroll.scrollerStyle = .overlay
         scroll.automaticallyAdjustsContentInsets = false
 
-        border.boxType = .custom
-        border.titlePosition = .noTitle
-        border.fillColor = .clear
-        border.borderColor = NSColor.labelColor.withAlphaComponent(0.1)
-        border.cornerRadius = 12
+        let radius = Self.cornerRadius
+        let mask = NSImage(size: NSSize(width: 2 * radius + 1, height: 2 * radius + 1), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        mask.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        mask.resizingMode = .stretch
 
         let background = NSVisualEffectView()
-        background.material = .popover
+        background.material = .menu
+        background.blendingMode = .behindWindow
         background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 12
-        background.layer?.masksToBounds = true
-        [field, separator, scroll, border].forEach(background.addSubview)
+        background.maskImage = mask
+        [field, separator, scroll].forEach(background.addSubview)
         panel.contentView = background
     }
 
@@ -170,7 +160,6 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         } ?? []
         host = window
         field.stringValue = ""
-        border.borderWidth = 1 / window.backingScaleFactor
         refilter()
         let target = panel.frame
         let animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -244,39 +233,31 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         commands.indices.flatMap { index -> [Row] in
             let command = commands[index]
             let startsGroup = index == 0 || commands[index - 1].group != command.group
-            return (startsGroup ? [.header(command.group)] : []) + [.command(command, [])]
+            return (startsGroup ? [.header(command.group)] : []) + [.command(command)]
         }
     }
 
     private func rankedRows(for query: String) -> [Row] {
-        let matches: [(command: PaletteCommand, score: Int, ranges: [NSRange])] = commands.compactMap { command in
-            let leaf = fuzzyMatch(query, in: command.item.title).map { match in
-                (score: match.score, ranges: match.ranges.map { NSRange(location: $0.location + command.pathLength, length: $0.length) })
-            }
-            return (leaf ?? fuzzyMatch(query, in: command.label)).map { (command, $0.score, $0.ranges) }
+        let matches = commands.compactMap { command in
+            (fuzzyMatch(query, in: command.item.title) ?? fuzzyMatch(query, in: command.label)).map { (command: command, score: $0) }
         }
         guard !matches.isEmpty else { return [.empty] }
-        return matches.sorted { $0.score > $1.score }.map { .command($0.command, $0.ranges) }
-    }
-
-    private func height(of row: Row) -> CGFloat {
-        if case .header = row { return Self.headerHeight }
-        return Self.rowHeight
+        return matches.sorted { $0.score > $1.score }.map { .command($0.command) }
     }
 
     private func layout() {
         guard let host else { return }
-        let listHeight = min(rows.map(height(of:)).reduce(0, +), Self.rowHeight * Self.maxVisibleRows)
-        let height = Self.fieldHeight + 1 + listHeight + 2 * Self.listInset
+        let listHeight = CGFloat(min(rows.count, Self.maxVisibleRows)) * Self.rowHeight
+        let height = Self.menuInset + Self.rowHeight + Self.separatorHeight + listHeight + Self.menuInset
         let area = host.convertToScreen(host.contentLayoutRect)
-        let width = min(540, area.width - 48)
-        panel.setFrame(NSRect(x: area.midX - width / 2, y: area.maxY - 12 - height, width: width, height: height), display: false)
-        let fieldLine = field.intrinsicContentSize.height
-        field.frame = NSRect(x: 14, y: height - (Self.fieldHeight + fieldLine) / 2, width: width - 28, height: fieldLine)
-        separator.frame = NSRect(x: 0, y: height - Self.fieldHeight - 1, width: width, height: 1)
-        scroll.frame = NSRect(x: 0, y: Self.listInset, width: width, height: listHeight)
-        border.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        let width = min(380, area.width - 48)
+        panel.setFrame(NSRect(x: area.midX - width / 2, y: area.maxY - 6 - height, width: width, height: height), display: false)
+        let fieldTop = height - Self.menuInset
+        field.frame = NSRect(x: 10, y: fieldTop - (Self.rowHeight + field.frame.height) / 2, width: width - 20, height: field.frame.height)
+        separator.frame = NSRect(x: 10, y: fieldTop - Self.rowHeight - Self.separatorHeight / 2 - 0.5, width: width - 20, height: 1)
+        scroll.frame = NSRect(x: 0, y: Self.menuInset, width: width, height: listHeight)
         table.sizeLastColumnToFit()
+        panel.invalidateShadow()
     }
 
     private func moveSelection(by step: Int) {
@@ -290,7 +271,7 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
     }
 
     private func run(row: Int) {
-        guard rows.indices.contains(row), case .command(let command, _) = rows[row] else { return }
+        guard rows.indices.contains(row), case .command(let command) = rows[row] else { return }
         close()
         NSApp.sendAction(command.action, to: command.item.target, from: command.item)
     }
@@ -298,6 +279,8 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
     @objc private func rowClicked(_ sender: Any?) { run(row: table.clickedRow) }
 
     func controlTextDidChange(_ notification: Notification) { refilter() }
+
+    func searchFieldDidEndSearching(_ sender: NSSearchField) { refilter() }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         if selector == #selector(NSResponder.moveUp(_:)) { moveSelection(by: -1) }
@@ -309,8 +292,6 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
-
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { height(of: rows[row]) }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
         if case .command = rows[row] { return true }
@@ -330,28 +311,27 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSTextFieldDelegate, NST
         switch rows[row] {
         case .header(let title):
             let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
-            label.textColor = .tertiaryLabelColor
-            pin(label, in: cell, verticalOffset: 3)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            label.textColor = .secondaryLabelColor
+            pin(label, in: cell, verticalOffset: 2)
         case .empty:
             let label = NSTextField(labelWithString: "No matching commands")
-            label.font = .systemFont(ofSize: NSFont.systemFontSize)
+            label.font = .menuFont(ofSize: 0)
             label.textColor = .secondaryLabelColor
             pin(label, in: cell, verticalOffset: 0)
-        case .command(let command, let matches):
+        case .command(let command):
             let selected = row == tableView.selectedRow
             let primary = selected ? NSColor.alternateSelectedControlTextColor : .labelColor
             let secondary = selected ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75) : .secondaryLabelColor
-            let title = NSMutableAttributedString(string: command.label, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize), .foregroundColor: primary])
+            let title = NSMutableAttributedString(string: command.label, attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: primary])
             title.addAttribute(.foregroundColor, value: secondary, range: NSRange(location: 0, length: command.pathLength))
-            matches.forEach { title.addAttribute(.font, value: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold), range: $0) }
             let label = NSTextField(labelWithAttributedString: title)
             label.lineBreakMode = .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             pin(label, in: cell, verticalOffset: 0)
             let shortcut = NSTextField(labelWithString: command.shortcut)
-            shortcut.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            shortcut.textColor = selected ? .alternateSelectedControlTextColor : .secondaryLabelColor
+            shortcut.font = .menuFont(ofSize: 0)
+            shortcut.textColor = secondary
             shortcut.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(shortcut)
             NSLayoutConstraint.activate([
