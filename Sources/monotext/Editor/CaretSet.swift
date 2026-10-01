@@ -119,6 +119,7 @@ func occurrenceNeedle(for carets: [NSRange], primary: Int, in text: NSString) ->
     let selection = carets[min(primary, carets.count - 1)]
     guard selection.length > 0, selection.length <= 200 else { return nil }
     let needle = text.substring(with: selection)
+    guard !needle.contains(where: \.isNewline), needle.contains(where: { $0 != " " && $0 != "\t" }) else { return nil }
     guard carets.allSatisfy({ text.substring(with: $0).lowercased() == needle.lowercased() }) else { return nil }
     return needle
 }
