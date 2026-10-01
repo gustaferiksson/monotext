@@ -9,7 +9,8 @@ func normalizeCarets(_ ranges: [NSRange], length: Int) -> [NSRange] {
     var merged = [first]
     for range in clamped.sorted(by: caretOrder).dropFirst() {
         let last = merged[merged.count - 1]
-        guard range.location <= NSMaxRange(last) else {
+        let touchesCaret = range.location == NSMaxRange(last) && (range.length == 0 || last.length == 0)
+        guard range.location < NSMaxRange(last) || touchesCaret else {
             merged.append(range)
             continue
         }
@@ -31,9 +32,12 @@ func occurrences(of needle: String, in text: NSString, wordBoundaries: Bool, wit
         let scope = NSRange(location: searchStart, length: NSMaxRange(bounds) - searchStart)
         let hit = text.range(of: needle, options: [.literal], range: scope)
         guard hit.location != NSNotFound else { break }
-        searchStart = hit.location + 1
-        guard !wordBoundaries || isWholeWord(hit, in: text) else { continue }
+        guard !wordBoundaries || isWholeWord(hit, in: text) else {
+            searchStart = hit.location + 1
+            continue
+        }
         found.append(hit)
+        searchStart = NSMaxRange(hit)
     }
     return found
 }
@@ -44,9 +48,9 @@ private func isWholeWord(_ range: NSRange, in text: NSString) -> Bool {
         guard let scalar = Unicode.Scalar(text.character(at: index)) else { return false }
         return wordCharacters.contains(scalar)
     }
-    if range.location > 0, isWordCharacter(range.location - 1) { return false }
+    if range.location > 0, isWordCharacter(range.location), isWordCharacter(range.location - 1) { return false }
     let after = NSMaxRange(range)
-    return after >= text.length || !isWordCharacter(after)
+    return after >= text.length || !isWordCharacter(after - 1) || !isWordCharacter(after)
 }
 
 func nextOccurrence(after location: Int, of needle: String, in text: NSString, wordBoundaries: Bool, excluding taken: [NSRange]) -> NSRange? {
