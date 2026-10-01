@@ -35,6 +35,7 @@ Requires macOS 26 or later.
 | ⌥↑ / ⌥↓ | Move the line up or down |
 | ⇧⌥↑ / ⇧⌥↓ | Copy the line up or down |
 | ⇧⌥⌘↑↓←→ | Grow the column selection |
+| ⇧⌘P | Command Palette |
 
 ## Known limitations
 
