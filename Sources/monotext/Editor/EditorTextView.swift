@@ -268,6 +268,10 @@ final class EditorTextView: NSTextView {
     }
 
     override func cut(_ sender: Any?) {
+        guard caretStorage.contains(where: { $0.length > 0 }) else {
+            cutLines()
+            return
+        }
         guard caretStorage.count > 1 else {
             super.cut(sender)
             return
@@ -494,6 +498,29 @@ final class EditorTextView: NSTextView {
         endLineEdit(record, results)
     }
 
+    private func cutLines() {
+        let blocks = lineBlocks(for: caretStorage, in: text)
+        guard !blocks.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(blocks.map { lineBody(of: $0) + "\n" }.joined(), forType: .string)
+        let removals = blocks.map { block -> NSRange in
+            guard NSMaxRange(block) == text.length, !isNewline(text.character(at: NSMaxRange(block) - 1)),
+                  let previous = neighbourLine(of: block, by: -1) else { return block }
+            let start = previous.location + (lineBody(of: previous) as NSString).length
+            return NSRange(location: start, length: NSMaxRange(block) - start)
+        }
+        let record = beginLineEdit()
+        var shift = 0
+        var results: [NSRange] = []
+        for removal in removals {
+            let location = removal.location - shift
+            results.append(NSRange(location: location, length: 0))
+            guard replaceCharacters(in: NSRange(location: location, length: removal.length), with: "") else { continue }
+            shift += removal.length
+        }
+        endLineEdit(record, results)
+    }
+
     @objc func undoCursor(_ sender: Any?) {
         guard let previous = caretHistory.popLast() else { return }
         apply(previous, primaryHint: previous.last?.location, recordHistory: false)
@@ -505,6 +532,8 @@ final class EditorTextView: NSTextView {
 
     override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
+        case #selector(cut(_:)):
+            return isEditable
         case #selector(collapseCursors(_:)):
             return caretStorage.count > 1
         case #selector(undoCursor(_:)):
