@@ -266,8 +266,12 @@ final class CommandPalette: NSObject, NSWindowDelegate, NSSearchFieldDelegate, N
         let position = selectable.firstIndex(of: table.selectedRow).map { $0 + step } ?? 0
         let next = selectable[(position + selectable.count) % selectable.count]
         table.selectRowIndexes([next], byExtendingSelection: false)
-        if next > 0, case .header = rows[next - 1] { table.scrollRowToVisible(next - 1) }
-        table.scrollRowToVisible(next)
+        let row = table.rect(ofRow: next)
+        let target = if next > 0, case .header = rows[next - 1] { row.union(table.rect(ofRow: next - 1)) } else { row }
+        let visible = scroll.documentVisibleRect
+        // scrollRowToVisible animates during key events, so key repeat restarts it mid-flight and strands the list between rows.
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: min(max(visible.minY, target.maxY - visible.height), target.minY)))
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     private func run(row: Int) {
